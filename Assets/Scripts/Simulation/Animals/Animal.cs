@@ -143,7 +143,7 @@ public class Animal : MonoBehaviour
 
         if (!found) return;
         State.position = bestPos;
-        State.velocity = Vector2.zero;
+        State.velocity *= 0.3f;
     }
 
     // ── Feeding / Drinking ────────────────────────────────────────────────────

@@ -18,15 +18,12 @@ public class ExtinctionPopup : Popup
 
     protected override void Awake()
     {
+        SimulationSession.OnExtinctionEvent += Show;
+
         base.Awake();
         quitButton.onClick.AddListener(OnQuit);
         editButton.onClick.AddListener(OnEdit);
         restartButton.onClick.AddListener(OnRestart);
-
-        // Sottoscrizione in Awake (non OnEnable): ForceInitPopup chiamerebbe
-        // SetActive(true→false), OnEnable+OnDisable farebbero subscribe+unsubscribe
-        // immediatamente, lasciando zero subscriber al momento dell'estinzione.
-        SimulationSession.OnExtinctionEvent += Show;
     }
 
     private void OnDestroy()

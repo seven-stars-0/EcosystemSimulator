@@ -83,7 +83,7 @@ public class ParameterPanel : MonoBehaviour
         // ── Movement ──────────────────────────────────────────────────────────
         speedEnergyCost  .Setup("Speed energy cost",    s.speedEnergyCost,    0f,    0.02f, v => s.speedEnergyCost    = v);
         slopeEnergyCost  .Setup("Slope energy cost",    s.slopeEnergyCost,    0f,    0.10f, v => s.slopeEnergyCost    = v);
-        steeringForceScale.Setup("Steering force scale", s.steeringForceScale, 0.3f,  5f,   v => s.steeringForceScale = v);  // FIX: era s.slopeEnergyCost
+        steeringForceScale.Setup("Steering force scale", s.steeringForceScale, 0.3f,  5f,   v => s.steeringForceScale = v);
  
         // ── Feeding ───────────────────────────────────────────────────────────
         plantEnergyValue  .Setup("Plant energy value",   s.plantEnergyValue,   0.05f, 1.5f,  v => s.plantEnergyValue   = v);

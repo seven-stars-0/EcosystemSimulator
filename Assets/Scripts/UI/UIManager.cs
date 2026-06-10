@@ -6,10 +6,10 @@ public class UIManager : MonoBehaviour
 {
     public static UIManager Instance { get; private set; }
 
-    [Header("Screens — drag all UIScreens here")]
+    [Header("Screens")]
     [SerializeField] private UIScreen[] screens;
 
-    [Header("Popups — drag all PopupBase here")]
+    [Header("Popups")]
     [SerializeField] private ConfirmPopup confirmPopup;
     [SerializeField] private EnterValuePopup enterValuePopup;
     [SerializeField] private ExtinctionPopup extinctionPopup;
@@ -18,15 +18,11 @@ public class UIManager : MonoBehaviour
     private UIScreen _current;
     private readonly Stack<UIScreen> _history = new();
 
-    // ── Init ──────────────────────────────────────────────────────────────────
-
     private void Awake()
     {
         if (Instance != null) { Destroy(gameObject); return; }
         Instance = this;
 
-        // Registra e nasconde tutte le schermate.
-        // SetActive(true) garantisce che Awake sia già girato prima di HideImmediate.
         foreach (var s in screens)
         {
             if (s == null) continue;
@@ -35,48 +31,44 @@ public class UIManager : MonoBehaviour
             s.HideImmediate();
         }
 
-        // Forza l'Awake dei popup prima del primo utilizzo.
-        // PopupBase.Awake fa SetActive(false), quindi dopo questo
-        // ogni popup è inizializzato e nascosto.
         ForceInitPopup(confirmPopup);
         ForceInitPopup(enterValuePopup);
         ForceInitPopup(extinctionPopup);
     }
 
     /// <summary>
-    /// SetActive(true) triggerà Awake del popup se non è ancora girato.
-    /// PopupBase.Awake chiama SetActive(false): il popup si auto-nasconde.
-    /// Serve solo se il popup parte inattivo nell'Inspector.
+    /// Garantisce che il popup abbia girato il suo Awake (attivandolo brevemente
+    /// se era inattivo) e lo lascia SEMPRE disattivato alla fine.
+    ///
+    /// Il bug precedente: se il popup partiva attivo in Inspector, Awake girava
+    /// subito e lo disattivava. ForceInitPopup lo riattivava (Awake non ri-gira)
+    /// e non lo ri-disattivava → popup rimasto visibile.
+    /// Fix: SetActive(false) incondizionato alla fine.
     /// </summary>
     private static void ForceInitPopup(Popup popup)
     {
         if (popup == null) return;
-        if (popup.gameObject.activeSelf) return;  // Awake già girato
-        popup.gameObject.SetActive(true);          // triggerà Awake → SetActive(false)
+
+        // Se inattivo, attivalo per triggerare Awake (una tantum)
+        if (!popup.gameObject.activeSelf)
+            popup.gameObject.SetActive(true);
+
+        // Garantisce sempre lo stato nascosto, qualunque cosa sia successa
+        popup.gameObject.SetActive(false);
     }
 
     private void Start() => Show<MainScreen>(pushToHistory: false);
 
-    // ── Registry ──────────────────────────────────────────────────────────────
-
     public T GetScreen<T>() where T : UIScreen
     {
         if (_registry.TryGetValue(typeof(T), out UIScreen s)) return (T)s;
-        Debug.LogError($"[UIManager] {typeof(T).Name} not registered in Inspector.");
+        Debug.LogError($"[UIManager] {typeof(T).Name} not registered.");
         return null;
     }
 
-    // ── Navigazione standard ──────────────────────────────────────────────────
-
-    /// <summary>
-    /// Mostra una schermata. La schermata corrente viene nascosta con fade.
-    /// Se pushToHistory=true, la schermata corrente va nella history
-    /// (Back la riattiverà).
-    /// </summary>
     public void Show(UIScreen next, bool pushToHistory = true)
     {
         if (next == null) { Debug.LogError("[UIManager] Show called with null screen."); return; }
-
         if (_current != null)
         {
             if (pushToHistory) _history.Push(_current);
@@ -92,25 +84,14 @@ public class UIManager : MonoBehaviour
         if (s != null) Show(s, pushToHistory);
     }
 
-    /// <summary>
-    /// Torna alla schermata precedente nello stack.
-    /// </summary>
     public void GoBack()
     {
-        if (_history.Count == 0)
-        {
-            Debug.LogWarning("[UIManager] GoBack called but history is empty.");
-            return;
-        }
-
+        if (_history.Count == 0) { Debug.LogWarning("[UIManager] GoBack: history empty."); return; }
         _current.Hide();
         _current = _history.Pop();
         _current.Show();
     }
 
-    /// <summary>
-    /// Torna alla MainScreen con history vuota.
-    /// </summary>
     public void GoToMain()
     {
         _current?.HideImmediate();
@@ -119,36 +100,20 @@ public class UIManager : MonoBehaviour
         _current?.Show();
     }
 
-    // ── Navigazione pulita (per uscire da simulazione/estinzione) ────────────
-
     /// <summary>
-    /// Naviga direttamente a <typeparamref name="T"/> ricostruendo la history
-    /// in modo esplicito dai parametri (dal più vecchio al più recente).
-    ///
-    /// Esempio — EditorHUD con Back funzionante:
-    ///   NavigateClean&lt;EditorHUD&gt;(GetScreen&lt;MainScreen&gt;(), GetScreen&lt;MapSelectionScreen&gt;())
-    ///   → history: [MainScreen, MapSelectionScreen]
-    ///   → Back da EditorHUD → MapSelectionScreen → Back → MainScreen ✓
-    ///
-    /// Esempio — MapSelectionScreen con Back verso MainScreen:
-    ///   NavigateClean&lt;MapSelectionScreen&gt;(GetScreen&lt;MainScreen&gt;())
-    ///   → history: [MainScreen]
-    ///   → Back da MapSelectionScreen → MainScreen ✓
+    /// Naviga a T ricostruendo la history in modo esplicito.
+    /// Passare gli schermi genitore dal più vecchio al più recente.
+    /// Esempio: NavigateClean&lt;EditorHUD&gt;(GetScreen&lt;MainScreen&gt;(), GetScreen&lt;MapSelectionScreen&gt;())
     /// </summary>
     public void NavigateClean<T>(params UIScreen[] historyFromOldestToNewest) where T : UIScreen
     {
         _current?.HideImmediate();
         _history.Clear();
-
-        // Push dal più vecchio al più recente: Pop restituirà il più recente per primo
         foreach (var screen in historyFromOldestToNewest)
             if (screen != null) _history.Push(screen);
-
         _current = GetScreen<T>();
         _current?.Show();
     }
-
-    // ── Popup API ─────────────────────────────────────────────────────────────
 
     public void ShowConfirm(string message, Action onConfirm)
         => confirmPopup.Present(message, onConfirm);

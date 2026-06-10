@@ -1,24 +1,20 @@
 using UnityEngine;
 
-/// <summary>
-/// Single entry point for building/tearing the 3D world.
-/// UI and tools depend only on this facade.
-/// </summary>
 public class WorldSession : MonoBehaviour
 {
     public static WorldSession Instance { get; private set; }
 
     [Header("Systems")]
-    [SerializeField] private WorldBuilder  worldBuilder;
-    [SerializeField] private WorldEditor   worldEditor;
+    [SerializeField] private WorldBuilder worldBuilder;
+    [SerializeField] private WorldEditor worldEditor;
     [SerializeField] private WorldRenderer worldRenderer;
-    [SerializeField] private WorldCamera   worldCamera;
+    [SerializeField] private WorldCamera worldCamera;
 
-    public WorldBuilder  Builder  => worldBuilder;
-    public WorldEditor   Editor   => worldEditor;
+    public WorldBuilder Builder => worldBuilder;
+    public WorldEditor Editor => worldEditor;
     public WorldRenderer Renderer => worldRenderer;
-    public WorldCamera   Camera   => worldCamera;
-    public bool          IsActive { get; private set; }
+    public WorldCamera Camera => worldCamera;
+    public bool IsActive { get; private set; }
 
     private void Awake()
     {
@@ -31,6 +27,10 @@ public class WorldSession : MonoBehaviour
         MapSession.Instance.SetMap(map);
         worldBuilder.BuildForEditor(map);
         IsActive = true;
+
+        // Applica skybox e impostazioni camera ogni volta che si entra nel mondo
+        AppSettingsManager.Instance?.ApplySkybox();
+        AppSettingsManager.Instance?.ApplyCameraSettings();
     }
 
     public void EnterSimulation(MapData map)
@@ -38,6 +38,9 @@ public class WorldSession : MonoBehaviour
         MapSession.Instance.SetMap(map);
         worldBuilder.BuildForSimulation(map);
         IsActive = true;
+
+        AppSettingsManager.Instance?.ApplySkybox();
+        AppSettingsManager.Instance?.ApplyCameraSettings();
     }
 
     public void Exit()

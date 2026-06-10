@@ -325,4 +325,40 @@ public class WorldCamera : MonoBehaviour
         _targetPivot.x = Mathf.Clamp(_targetPivot.x, 0f, worldSizeX);
         _targetPivot.z = Mathf.Clamp(_targetPivot.z, 0f, worldSizeZ);
     }
+
+    /// <summary>
+    /// Copia i valori da CameraSettings nei campi pubblici di WorldCamera.
+    /// Chiamato da AppSettingsManager al caricamento e da CameraPanel ad ogni modifica.
+    /// </summary>
+    public void ApplySettings(CameraSettings s)
+    {
+        orbitSpeedX = s.orbitSpeedX;
+        orbitSpeedY = s.orbitSpeedY;
+        pitchMin = s.pitchMin;
+        pitchMax = s.pitchMax;
+        zoomSpeed = s.zoomSpeed;
+        panSpeed = s.panSpeed;
+        panDamping = s.panDamping;
+        arrowSpeed = s.arrowSpeed;
+        povEyeHeight = s.povEyeHeight;
+        povSensitivity = s.povSensitivity;
+    }
+
+    /// <summary>
+    /// Copia i valori correnti di WorldCamera dentro un CameraSettings.
+    /// Usato da CameraPanel per leggere i valori attuali prima del Bind.
+    /// </summary>
+    public void SaveToSettings(CameraSettings s)
+    {
+        s.orbitSpeedX = orbitSpeedX;
+        s.orbitSpeedY = orbitSpeedY;
+        s.pitchMin = pitchMin;
+        s.pitchMax = pitchMax;
+        s.zoomSpeed = zoomSpeed;
+        s.panSpeed = panSpeed;
+        s.panDamping = panDamping;
+        s.arrowSpeed = arrowSpeed;
+        s.povEyeHeight = povEyeHeight;
+        s.povSensitivity = povSensitivity;
+    }
 }

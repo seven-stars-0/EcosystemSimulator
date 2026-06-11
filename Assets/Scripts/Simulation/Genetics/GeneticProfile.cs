@@ -18,18 +18,18 @@ public class GeneticProfile
     [Range(0.5f,   8f)] public float matingRange          = 2f;
     [Range(0.5f, 2.5f)] public float bodySize             = 1f;
  
-    public const int GENE_COUNT = 11;
+    public const int GENE_COUNT = 12;
  
     public static readonly string[] GeneNames =
     {
         "w_food", "w_water", "w_social", "w_slope", "w_curiosity", "w_flee",
-        "maxSpeed", "visionRange", "metabolismMult", "reproductionThreshold", "bodySize"
+        "maxSpeed", "visionRange", "metabolismMult", "reproductionThreshold", "bodySize", "matingRange"
     };
  
     public float[] ToArray() => new float[]
     {
         w_food, w_water, w_social, w_slope, w_curiosity, w_flee,
-        maxSpeed, visionRange, metabolismMult, reproductionThreshold, bodySize
+        maxSpeed, visionRange, metabolismMult, reproductionThreshold, bodySize, matingRange
     };
  
     public void FromArray(float[] g)
@@ -45,6 +45,7 @@ public class GeneticProfile
         metabolismMult        = g[8];
         reproductionThreshold = g[9];
         bodySize              = g[10];
+        matingRange           = g[11];
     }
  
     public float EffectiveMaxSpeed => maxSpeed / Mathf.Pow(bodySize, 0.4f);
@@ -55,7 +56,7 @@ public class GeneticProfile
         var g = new GeneticProfile();
         g.w_water               = Rand(0.1f,  1.5f);
         g.w_social              = Rand(-2.0f, 1.5f);   // più varianza verso asociale
-        g.w_slope               = Rand(-0.6f, 0.6f);
+        g.w_slope               = Rand(-0.2f, 0.2f);
         g.w_curiosity           = Rand(0.5f,  2.5f);   // più determinante
         g.maxSpeed              = Rand(2.0f,  6.5f);
         g.visionRange           = Rand(6f,    24f);

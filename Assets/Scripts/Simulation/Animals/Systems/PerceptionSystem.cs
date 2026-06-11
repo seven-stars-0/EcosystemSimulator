@@ -3,32 +3,28 @@ using UnityEngine;
 
 public static class PerceptionSystem
 {
-    private static readonly List<Animal>     _animalBuf = new(64);
-    private static readonly List<Vector2Int> _plantBuf  = new(32);
+    private static readonly List<Animal> _animalBuf = new(64);
+    private static readonly List<Vector2Int> _plantBuf = new(32);
 
-    // ── dt aggiunto come parametro ────────────────────────────────────────────
     public static PerceptionData Compute(
-        Animal              animal,
-        AnimalState         state,
-        WorldGrid           grid,
-        RenderConfig        cfg,
+        Animal animal,
+        AnimalState state,
+        WorldGrid grid,
+        RenderConfig cfg,
         SpatialGrid<Animal> animalGrid,
-        PlantManager        plantMgr,
-        SimulationSettings  settings,
-        float               dt)
+        PlantManager plantMgr,
+        SimulationSettings settings,
+        float dt)
     {
-        var     p     = new PerceptionData();
-        float   range = state.genes.visionRange;
-        Vector2 pos   = state.position;
+        var p = new PerceptionData();
+        float range = state.genes.visionRange;
+        Vector2 pos = state.position;
 
-        // Wander usa dt scalato → si aggiorna alla stessa "velocità simulazione"
-        p.wanderVector  = UpdateWander(state.wanderDir, dt);
+        p.wanderVector = UpdateWander(state.wanderDir, dt);
         state.wanderDir = p.wanderVector;
 
         ComputeSlope(pos, grid, cfg, ref p);
-
         animalGrid.Query(pos, range, _animalBuf);
-
         ComputeSocialFleeAndSeparation(animal, state, pos, range, _animalBuf, settings, ref p);
 
         if (state.CanMate(settings))
@@ -39,46 +35,39 @@ public static class PerceptionSystem
         else
             ComputeFoodPredator(animal, state, pos, range, _animalBuf, ref p);
 
+        // Passiamo i settings anche al calcolo dell'acqua per conoscere il drinkingRange
         ComputeWater(pos, range, grid, cfg, ref p);
-
         return p;
     }
 
-    // ── Wander ────────────────────────────────────────────────────────────────
-
     private static Vector2 UpdateWander(Vector2 current, float dt)
     {
-        // 120°/s di variazione casuale, ora proporzionale al dt scalato.
-        // A timeScale=5 il wander cambia 5x più velocemente → esplorazione proporzionale.
-        float angle    = Mathf.Atan2(current.y, current.x);
-        float noise    = Random.Range(-120f, 120f) * Mathf.Deg2Rad * dt;
+        float angle = Mathf.Atan2(current.y, current.x);
+        float noise = Random.Range(-120f, 120f) * Mathf.Deg2Rad * dt;
         float newAngle = angle + noise;
         return new Vector2(Mathf.Cos(newAngle), Mathf.Sin(newAngle));
     }
 
-    // ── Il resto dei metodi è identico alla versione precedente ──────────────
-
-    private static void ComputeSlope(Vector2 pos, WorldGrid grid, RenderConfig cfg,
-                                     ref PerceptionData p)
+    private static void ComputeSlope(Vector2 pos, WorldGrid grid, RenderConfig cfg, ref PerceptionData p)
     {
         int cx = Mathf.RoundToInt(pos.x / cfg.cellSize);
         int cy = Mathf.RoundToInt(pos.y / cfg.cellSize);
-        var cell     = grid.GetSafe(cx, cy);
+        var cell = grid.GetSafe(cx, cy);
         p.currentSlope = cell.slope;
-        p.slopeVector  = new Vector2(cell.gradientX, cell.gradientY);
+        p.slopeVector = new Vector2(cell.gradientX, cell.gradientY);
     }
 
     private static void ComputeSocialFleeAndSeparation(
         Animal self, AnimalState state, Vector2 pos, float range,
         List<Animal> nearby, SimulationSettings settings, ref PerceptionData p)
     {
-        Vector2 socialSum     = Vector2.zero;
+        Vector2 socialSum = Vector2.zero;
         Vector2 separationSum = Vector2.zero;
-        Vector2 fleeSum       = Vector2.zero;
+        Vector2 fleeSum = Vector2.zero;
         int socialCnt = 0, predCnt = 0;
 
         float sepRadius = settings.separationRadius;
-        float sepForce  = settings.separationForce;
+        float sepForce = settings.separationForce;
 
         foreach (var other in nearby)
         {
@@ -113,14 +102,14 @@ public static class PerceptionSystem
 
         if (socialCnt > 0)
         {
-            p.socialVector    = socialSum / socialCnt;
-            p.socialCount     = socialCnt;
+            p.socialVector = socialSum / socialCnt;
+            p.socialCount = socialCnt;
             p.separationVector = separationSum;
         }
 
         if (predCnt > 0)
         {
-            p.fleeVector     = fleeSum.normalized;
+            p.fleeVector = fleeSum.normalized;
             p.predatorNearby = true;
         }
     }
@@ -138,17 +127,15 @@ public static class PerceptionSystem
             float dist = Vector2.Distance(pos, other.State.position);
             if (dist < bestDist && dist <= range)
             {
-                bestDist        = dist;
-                p.mateFound     = true;
+                bestDist = dist;
+                p.mateFound = true;
                 p.mateCandidate = other;
-                p.mateVector    = (other.State.position - pos).normalized;
+                p.mateVector = (other.State.position - pos).normalized;
             }
         }
     }
 
-    private static void ComputeFoodPrey(
-        Vector2 pos, float range, WorldGrid grid, RenderConfig cfg,
-        PlantManager plantMgr, ref PerceptionData p)
+    private static void ComputeFoodPrey(Vector2 pos, float range, WorldGrid grid, RenderConfig cfg, PlantManager plantMgr, ref PerceptionData p)
     {
         plantMgr.GetFruitCellsInRadius(pos, range, _plantBuf);
         if (_plantBuf.Count == 0) return;
@@ -166,15 +153,13 @@ public static class PerceptionSystem
 
         if (bestDist < range)
         {
-            p.toFood      = bestDir.normalized * (1f - bestDist / range);
-            p.foodFound   = true;
+            p.toFood = bestDir.normalized * (1f - bestDist / range);
+            p.foodFound = true;
             p.foodDistance = bestDist;
         }
     }
 
-    private static void ComputeFoodPredator(
-        Animal self, AnimalState state, Vector2 pos, float range,
-        List<Animal> nearby, ref PerceptionData p)
+    private static void ComputeFoodPredator(Animal self, AnimalState state, Vector2 pos, float range, List<Animal> nearby, ref PerceptionData p)
     {
         float bestDist = float.MaxValue;
         Vector2 bestDir = Vector2.zero;
@@ -192,12 +177,14 @@ public static class PerceptionSystem
 
         if (bestDist < range)
         {
-            p.toFood      = bestDir.normalized * (1f - bestDist / range);
-            p.foodFound   = true;
+            p.toFood = bestDir.normalized * (1f - bestDist / range);
+            p.foodFound = true;
             p.foodDistance = bestDist;
         }
     }
 
+    // FISSA IL JITTERING DELL'ACQUA
+    // Sostituisci unicamente il metodo ComputeWater dentro PerceptionSystem.cs
     private static void ComputeWater(
         Vector2 pos, float range, WorldGrid grid, RenderConfig cfg,
         ref PerceptionData p)
@@ -216,8 +203,8 @@ public static class PerceptionSystem
                 int nx = cx + dx, ny = cy + dy;
                 if (!grid.IsInside(nx, ny)) continue;
 
-                float wx  = nx * cfg.cellSize, wz = ny * cfg.cellSize;
-                float ddx = wx - pos.x,        ddz = wz - pos.y;
+                float wx = nx * cfg.cellSize, wz = ny * cfg.cellSize;
+                float ddx = wx - pos.x, ddz = wz - pos.y;
                 float dist = Mathf.Sqrt(ddx * ddx + ddz * ddz);
                 if (dist > range) continue;
 
@@ -227,25 +214,26 @@ public static class PerceptionSystem
                     if (dist < bestWaterDist)
                     {
                         bestWaterDist = dist;
-                        bestWaterDir  = new Vector2(ddx, ddz);
-                        waterFound    = true;
+                        bestWaterDir = new Vector2(ddx, ddz);
+                        waterFound = true;
                     }
                 }
                 else if (cell.height < lowestHeight)
                 {
                     lowestHeight = cell.height;
-                    lowestDir    = new Vector2(ddx, ddz);
+                    lowestDir = new Vector2(ddx, ddz);
                 }
             }
 
         if (waterFound)
         {
-            p.toWater    = bestWaterDir.normalized * (1f - bestWaterDist / range);
+            // Il vettore punta sempre all'acqua normalmente
+            p.toWater = bestWaterDir.normalized * (1f - bestWaterDist / range);
             p.waterFound = true;
         }
         else if (lowestDir != Vector2.zero)
         {
-            p.toWater    = lowestDir.normalized * 0.5f;
+            p.toWater = lowestDir.normalized * 0.5f;
             p.waterFound = false;
         }
     }

@@ -13,5 +13,7 @@ public class MainScreen : UIScreen
         mapsButton.onClick.AddListener(() => UIManager.Instance.Show<MapSelectionScreen>());
         settingsButton.onClick.AddListener(() => UIManager.Instance.Show<GeneralSettingsScreen>());
         quitButton.onClick.AddListener(() => Application.Quit());
+
+        Debug.Log("SCRIPT MODIFICATO");
     }
 }

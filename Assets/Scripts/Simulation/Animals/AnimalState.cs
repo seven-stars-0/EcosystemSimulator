@@ -21,6 +21,8 @@ public class AnimalState
     public int offspringCount = 0;
     public float age = 0f;
 
+    public const float MATURITY_AGE = 25f;
+
     // ── Tracciamento parentela (anti-inbreeding) ──────────────────────────────
     // -1 = nessun genitore tracciato (prima generazione o animali editor).
     // Impostati da ReproductionSystem.CreateOffspring().
@@ -35,8 +37,12 @@ public class AnimalState
 
     public bool CanMate(SimulationSettings s)
         => energy >= genes.reproductionThreshold
-        && reproductionCooldown <= 0f;
+        && reproductionCooldown <= 0f
+        && age >= MATURITY_AGE;
 
     public float EnergyNormalized => energy / genes.EnergyMax;
     public float Speed => velocity.magnitude;
+
+    // Serve per sapere se l'animale è un cucciolo (serve nel metabolismo)
+    public bool IsCub => age < MATURITY_AGE;
 }

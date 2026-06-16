@@ -48,9 +48,6 @@ public static class GeneticsOps
         profile.maxSpeed = Mathf.Max(0.2f, profile.maxSpeed);
         profile.visionRange = Mathf.Max(1f, profile.visionRange);
         profile.metabolismMult = Mathf.Max(0.1f, profile.metabolismMult);
-        profile.reproductionThreshold = Mathf.Clamp(profile.reproductionThreshold, 0.2f, 0.99f);
-        profile.bodySize = Mathf.Max(0.3f, profile.bodySize);
-        profile.matingRange = Mathf.Max(0.3f, profile.matingRange);
 
         return profile;
     }

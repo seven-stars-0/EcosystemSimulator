@@ -38,11 +38,17 @@ public class SimulationRunner : MonoBehaviour
     private int _preyCount;
     private int _predatorCount;
 
+    // ── Immigrazione ──────────────────────────────────────────────────────────
+    private float _immigrationPreyTimer;
+    private float _immigrationPredTimer;
+
     private void Awake()
     {
         if (Instance != null) { Destroy(gameObject); return; }
         Instance = this;
     }
+
+    // ── Start / Stop ──────────────────────────────────────────────────────────
 
     public void StartSimulation(MapData data, PlantManager plants)
     {
@@ -57,6 +63,11 @@ public class SimulationRunner : MonoBehaviour
         MaxPreyCount = 0;
         MaxPredatorCount = 0;
 
+        // Immigrazione: parte già "pronta" così la prima immigrazione avviene
+        // dopo il primo interval, non subito.
+        _immigrationPreyTimer = _settings.immigrationInterval;
+        _immigrationPredTimer = _settings.immigrationInterval;
+
         _spatial = new SpatialGrid<Animal>(Mathf.Max(_settings.drinkingRange, 5f));
 
         plants.Initialize(_grid, _settings, _cfg, data.spawnEntries);
@@ -70,6 +81,22 @@ public class SimulationRunner : MonoBehaviour
         paused = false;
         Debug.Log($"[SimulationRunner] Started: {_preyCount} prey, {_predatorCount} predators.");
     }
+
+    public void StopSimulation()
+    {
+        foreach (var a in _animals) if (a) Destroy(a.gameObject);
+        _animals.Clear();
+        _toAdd.Clear();
+        _toRemove.Clear();
+        _preyCount = 0;
+        _predatorCount = 0;
+        _plants?.Clear();
+        _grid = null;
+        paused = true;
+        ElapsedTime = 0f;
+    }
+
+    // ── Update loop ───────────────────────────────────────────────────────────
 
     private void Update()
     {
@@ -90,6 +117,9 @@ public class SimulationRunner : MonoBehaviour
             TickAnimal(a, dt);
         }
 
+        // ── Micro-immigrazione ────────────────────────────────────────────────
+        TickImmigration(dt);
+
         foreach (var n in _toAdd) AddAnimal(n);
         foreach (var d in _toRemove) RemoveAnimal(d);
         _toAdd.Clear();
@@ -98,6 +128,8 @@ public class SimulationRunner : MonoBehaviour
         if (_preyCount > MaxPreyCount) MaxPreyCount = _preyCount;
         if (_predatorCount > MaxPredatorCount) MaxPredatorCount = _predatorCount;
     }
+
+    // ── Tick singolo animale ──────────────────────────────────────────────────
 
     private void TickAnimal(Animal animal, float dt)
     {
@@ -121,9 +153,12 @@ public class SimulationRunner : MonoBehaviour
         if (!state.IsAlive) _toRemove.Add(animal);
     }
 
+    // ── TryAttack: predatore fallibile con Holling Type II ───────────────────
+
     private void TryAttack(Animal predator, AnimalState pState)
     {
-        if (pState.hunger < 0.2f) return;
+        // Il predatore non caccia se ha poca fame o è in cooldown
+        if (pState.hunger < 0.20f) return;
         if (pState.attackCooldown > 0f) return;
 
         _spatial.Query(pState.position, _settings.attackRange, _queryBuf);
@@ -134,20 +169,143 @@ public class SimulationRunner : MonoBehaviour
             if (prey.State.species != AnimalSpecies.Prey) continue;
             if (Vector2.Distance(pState.position, prey.State.position) > _settings.attackRange) continue;
 
-            Vector2 knockDir = (prey.State.position - pState.position).normalized;
-            prey.State.velocity = knockDir * _settings.knockbackSpeed;
+            bool killSuccess = Random.value < _settings.killChance;
 
-            MetabolismSystem.EatPrey(pState, _settings);
-            pState.attackCooldown = _settings.attackCooldown;
+            if (killSuccess)
+            {
+                // ── KILL RIUSCITO ─────────────────────────────────────────────
+                MetabolismSystem.Eat(pState, _settings);
 
-            _toRemove.Add(prey);
+                // Handling Time: il predatore "mangia" la preda e non caccia
+                // per handlingTime secondi → risposta funzionale Holling II.
+                pState.attackCooldown = _settings.handlingTime;
+
+                _toRemove.Add(prey);
+            }
+            else
+            {
+                // ── ATTACCO FALLITO ───────────────────────────────────────────
+                // La preda riceve knockback e si allontana velocemente.
+                Vector2 knockDir = (prey.State.position - pState.position).normalized;
+                prey.State.velocity = knockDir * _settings.knockbackSpeed;
+
+                // Il predatore entra in mini-stun da sbilancio.
+                pState.attackCooldown = _settings.missStunDuration;
+            }
+
+            // Un attacco per tick (riuscito o meno) → break
             break;
         }
     }
 
+    // ── Micro-Immigrazione ────────────────────────────────────────────────────
+
+    private void TickImmigration(float dt)
+    {
+        // ── Prede ─────────────────────────────────────────────────────────────
+        if (_preyCount < _settings.immigrationThreshold)
+        {
+            _immigrationPreyTimer -= dt;
+            if (_immigrationPreyTimer <= 0f)
+            {
+                _immigrationPreyTimer = _settings.immigrationInterval;
+                SpawnImmigrant(AnimalSpecies.Prey);
+                Debug.Log($"[Immigration] 1 preda immigrata ai bordi (pop={_preyCount})");
+            }
+        }
+        else
+        {
+            // Reset timer: se la popolazione si riprende, il conteggio riparte
+            _immigrationPreyTimer = _settings.immigrationInterval;
+        }
+
+        // ── Predatori ─────────────────────────────────────────────────────────
+        if (_predatorCount < _settings.immigrationThreshold)
+        {
+            _immigrationPredTimer -= dt;
+            if (_immigrationPredTimer <= 0f)
+            {
+                _immigrationPredTimer = _settings.immigrationInterval;
+                SpawnImmigrant(AnimalSpecies.Predator);
+                Debug.Log($"[Immigration] 1 predatore immigrato ai bordi (pop={_predatorCount})");
+            }
+        }
+        else
+        {
+            _immigrationPredTimer = _settings.immigrationInterval;
+        }
+    }
+
+    private void SpawnImmigrant(AnimalSpecies species)
+    {
+        // Posizione casuale su uno dei 4 bordi della mappa
+        float maxW = (_grid.size - 1) * _cfg.cellSize;
+        float margin = _cfg.cellSize * 2f;
+
+        Vector2 pos = PickBorderPosition(maxW, margin);
+
+        // Cerca una cella terrestre valida vicino al bordo scelto
+        int cx = Mathf.RoundToInt(pos.x / _cfg.cellSize);
+        int cy = Mathf.RoundToInt(pos.y / _cfg.cellSize);
+        cx = Mathf.Clamp(cx, 0, _grid.size - 1);
+        cy = Mathf.Clamp(cy, 0, _grid.size - 1);
+
+        // Se la cella è acqua, cerca la più vicina passabile
+        if (_grid.Get(cx, cy).IsWater || _grid.Get(cx, cy).HasObstacle)
+        {
+            bool found = false;
+            for (int r = 1; r <= 5 && !found; r++)
+                for (int dx = -r; dx <= r && !found; dx++)
+                    for (int dy = -r; dy <= r && !found; dy++)
+                    {
+                        int nx = cx + dx, ny = cy + dy;
+                        if (!_grid.IsInside(nx, ny)) continue;
+                        if (_grid.Get(nx, ny).IsWater || _grid.Get(nx, ny).HasObstacle) continue;
+                        cx = nx; cy = ny; found = true;
+                    }
+            if (!found) return;  // nessuna cella valida trovata
+        }
+
+        float worldX = cx * _cfg.cellSize;
+        float worldZ = cy * _cfg.cellSize;
+
+        bool isPrey = species == AnimalSpecies.Prey;
+        GameObject prefab = isPrey ? preyPrefab : predatorPrefab;
+        if (prefab == null) return;
+
+        float h = _grid.SampleHeight(cx, cy) * _cfg.heightScale;
+        var go = Instantiate(prefab,
+            new Vector3(worldX, h, worldZ),
+            Quaternion.identity, animalContainer);
+
+        var animal = go.GetComponent<Animal>();
+        if (animal == null) { Destroy(go); return; }
+
+        var genes = isPrey ? GeneticProfile.RandomForPrey() : GeneticProfile.RandomForPredator();
+        animal.Initialize(species, worldX, worldZ, genes, _grid, _cfg, _settings, _nextId++);
+
+        // L'immigrante ha già il cooldown di riproduzione pieno (non si riproduce subito)
+        animal.State.reproductionCooldown = _settings.reproductionCooldown;
+
+        _toAdd.Add(animal);
+    }
+
+    private Vector2 PickBorderPosition(float maxW, float margin)
+    {
+        // 0=Top, 1=Bottom, 2=Left, 3=Right
+        switch (Random.Range(0, 4))
+        {
+            case 0: return new Vector2(Random.Range(0f, maxW), margin);
+            case 1: return new Vector2(Random.Range(0f, maxW), maxW - margin);
+            case 2: return new Vector2(margin, Random.Range(0f, maxW));
+            default: return new Vector2(maxW - margin, Random.Range(0f, maxW));
+        }
+    }
+
+    // ── Reproduzione ─────────────────────────────────────────────────────────
+
     private void TryReproduce(Animal parentA, Animal parentB)
     {
-        // Passa entrambi i genitori per impostare la parentela sulla prole
         var genes = ReproductionSystem.TryMate(parentA.State, parentB.State, _settings);
         if (genes == null) return;
 
@@ -167,13 +325,19 @@ public class SimulationRunner : MonoBehaviour
         _toAdd.Add(child);
     }
 
+    // ── Spawn da MapData ──────────────────────────────────────────────────────
+
     private void SpawnAnimalFromEntry(SpawnEntry entry)
     {
         bool isPrey = entry.type == SpawnType.Prey;
         var species = isPrey ? AnimalSpecies.Prey : AnimalSpecies.Predator;
         GameObject prefab = isPrey ? preyPrefab : predatorPrefab;
 
-        if (prefab == null) { Debug.LogWarning($"[SimulationRunner] Missing prefab for {species}"); return; }
+        if (prefab == null)
+        {
+            Debug.LogWarning($"[SimulationRunner] Missing prefab for {species}");
+            return;
+        }
 
         float h = _grid.SampleHeight(entry.worldX / _cfg.cellSize, entry.worldZ / _cfg.cellSize)
                   * _cfg.heightScale;
@@ -192,10 +356,11 @@ public class SimulationRunner : MonoBehaviour
         var genes = isPrey ? GeneticProfile.RandomForPrey() : GeneticProfile.RandomForPredator();
         animal.Initialize(species, entry.worldX, entry.worldZ, genes, _grid, _cfg, _settings, _nextId++);
         animal.State.reproductionCooldown = _settings.reproductionCooldown;
-        // parentAId/parentBId rimangono -1: prima generazione senza storia
 
         AddAnimal(animal);
     }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void AddAnimal(Animal a)
     {
@@ -211,19 +376,5 @@ public class SimulationRunner : MonoBehaviour
         if (a.State?.species == AnimalSpecies.Prey) _preyCount = Mathf.Max(0, _preyCount - 1);
         else _predatorCount = Mathf.Max(0, _predatorCount - 1);
         Destroy(a.gameObject);
-    }
-
-    public void StopSimulation()
-    {
-        foreach (var a in _animals) if (a) Destroy(a.gameObject);
-        _animals.Clear();
-        _toAdd.Clear();
-        _toRemove.Clear();
-        _preyCount = 0;
-        _predatorCount = 0;
-        _plants?.Clear();
-        _grid = null;
-        paused = true;
-        ElapsedTime = 0f;
     }
 }

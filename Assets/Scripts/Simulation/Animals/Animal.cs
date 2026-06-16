@@ -10,7 +10,6 @@ public class Animal : MonoBehaviour
 
     [Header("POV")]
     [SerializeField] public GameObject modelRoot;
-    public GameObject ModelRoot => modelRoot;
 
     private static readonly int SpeedHash = Animator.StringToHash("Speed");
 
@@ -46,7 +45,6 @@ public class Animal : MonoBehaviour
         };
 
         transform.position = new Vector3(worldX, h, worldZ);
-        ApplyBodySizeScale(genes.bodySize);
     }
 
     public void InitializeFromState(
@@ -61,15 +59,8 @@ public class Animal : MonoBehaviour
                                     state.position.y / cfg.cellSize) * cfg.heightScale;
 
         transform.position = new Vector3(state.position.x, h, state.position.y);
-        ApplyBodySizeScale(state.genes.bodySize);
     }
 
-    // bodySize=1.0 → scale=1.0 | bodySize=0.5 → ≈0.71 | bodySize=1.8 → ≈1.34
-    private void ApplyBodySizeScale(float bodySize)
-    {
-        float scale = Mathf.Pow(Mathf.Max(0.1f, bodySize), 0.5f);
-        transform.localScale = Vector3.one * scale;
-    }
 
     // ── Movement ──────────────────────────────────────────────────────────────
 
@@ -77,7 +68,7 @@ public class Animal : MonoBehaviour
     {
         State.velocity = Vector2.Lerp(State.velocity, acceleration, dt * 5f);
 
-        float maxSpeed = State.genes.EffectiveMaxSpeed;
+        float maxSpeed = State.genes.maxSpeed;
         if (State.velocity.sqrMagnitude > maxSpeed * maxSpeed)
             State.velocity = State.velocity.normalized * maxSpeed;
 
@@ -153,7 +144,7 @@ public class Animal : MonoBehaviour
         int cx = Mathf.RoundToInt(State.position.x / _cfg.cellSize);
         int cy = Mathf.RoundToInt(State.position.y / _cfg.cellSize);
         if (!plantMgr.TryEat(cx, cy, s)) return false;
-        MetabolismSystem.EatFruit(State, s);
+        MetabolismSystem.Eat(State, s);
         return true;
     }
 

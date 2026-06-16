@@ -2,8 +2,6 @@ using UnityEngine;
 
 public static class SteeringSystem
 {
-    private const float NeedThreshold = 0.15f;
-
     public static Vector2 Compute(
         AnimalState state,
         PerceptionData p,
@@ -33,11 +31,11 @@ public static class SteeringSystem
             brain = DeflectForceAlongShore(brain, shoreNormal, distanceToShore, state.velocity, cfg.cellSize);
 
             brain *= s.steeringForceScale;
-            return ClampToMaxSpeed(brain, g.EffectiveMaxSpeed);
+            return ClampToMaxSpeed(brain, g.maxSpeed);
         }
 
         // ── CASO 2: STATO DI BEVUTA (Ancoraggio alla sponda) ──────────────────
-        bool isDrinkingAtShore = (distanceToShore <= s.drinkingRange) && (state.thirst > NeedThreshold);
+        bool isDrinkingAtShore = (distanceToShore <= s.drinkingRange) && (state.thirst > state.needThreshold);
 
         if (isDrinkingAtShore)
         {
@@ -48,10 +46,10 @@ public static class SteeringSystem
         else
         {
             // ── CASO 3: NAVIGAZIONE STANDARD ──────────────────────────────────
-            float hungerUrgency = (state.hunger > NeedThreshold && p.foodFound) ? state.hunger : 0f;
-            float thirstUrgency = (state.thirst > NeedThreshold && p.waterFound) ? state.thirst : 0f;
+            float hungerUrgency = (state.hunger > state.needThreshold && p.foodFound) ? state.hunger : 0f;
+            float thirstUrgency = (state.thirst > state.needThreshold && p.waterFound) ? state.thirst : 0f;
 
-            bool isInEmergency = hungerUrgency > 0.65f || thirstUrgency > 0.65f;
+            bool isInEmergency = hungerUrgency > state.needThreshold || thirstUrgency > state.needThreshold;
 
             if (isInEmergency)
             {
@@ -82,11 +80,10 @@ public static class SteeringSystem
             }
 
             // Esplorazione (Wander)
-            float wanderWeight = isInEmergency ? 0.15f : 1.0f;
+            float wanderWeight = isInEmergency ? 0f : 1.0f;
             brain += p.wanderVector * Mathf.Max(0f, g.w_curiosity) * wanderWeight;
         }
 
-        // ── IL TUO FIX: LA DEVIAZIONE TANGENZIALE A 90° ────────────────────────
         // Se l'animale si sta muovendo (non sta bevendo) ed è vicino all'acqua, 
         // intercettiamo la forza finale. Se punta verso l'acqua, la ruotiamo di 90° lungo la costa.
         if (!isDrinkingAtShore)
@@ -96,7 +93,7 @@ public static class SteeringSystem
 
         // Scaling finale e Clamping alla velocità massima dell'animale
         brain *= s.steeringForceScale;
-        brain = ClampToMaxSpeed(brain, g.EffectiveMaxSpeed);
+        brain = ClampToMaxSpeed(brain, g.maxSpeed);
 
         // Lo sliding rimane attivo alla fine come "paracadute fisico" passivo
         brain = ApplyWaterSliding(brain, state.position, grid, cfg);

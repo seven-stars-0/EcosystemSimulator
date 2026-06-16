@@ -11,38 +11,47 @@ public class PlantManager : MonoBehaviour
 
     // ── State ─────────────────────────────────────────────────────────────────
 
-    private WorldGrid          _grid;
+    private WorldGrid _grid;
     private SimulationSettings _settings;
-    private RenderConfig       _cfg;
+    private RenderConfig _cfg;
 
     private PlantState[,] _plantStates;
 
-    // GO per le piante istanziate
-    private readonly Dictionary<(int, int), GameObject> _plantObjects    = new();
-    // Riferimenti ai GO figli "FruitIndicator" per ogni pianta
+    private readonly Dictionary<(int, int), GameObject> _plantObjects = new();
     private readonly Dictionary<(int, int), GameObject> _fruitIndicators = new();
 
     private float _growthAccumulator;
     private const float GROWTH_TICK_INTERVAL = 2f;
 
-    // ── Contatore O(1) ────────────────────────────────────────────────────────
+    // ── Contatori O(1) ────────────────────────────────────────────────────────
     private int _activePlantCount;
-    public  int ActivePlantCount => _activePlantCount;
+    private int _passableCellCount;   // NUOVO: celle dove le piante possono crescere
+
+    public int ActivePlantCount => _activePlantCount;
 
     // ── Init ──────────────────────────────────────────────────────────────────
 
     public void Initialize(WorldGrid grid, SimulationSettings settings, RenderConfig cfg,
                            List<SpawnEntry> editorPlants)
     {
-        _grid     = grid;
+        _grid = grid;
         _settings = settings;
-        _cfg      = cfg;
+        _cfg = cfg;
         _activePlantCount = 0;
         _growthAccumulator = 0f;
 
+        // Conta le celle disponibili per la carrying capacity
+        _passableCellCount = 0;
+        for (int x = 0; x < grid.size; x++)
+            for (int y = 0; y < grid.size; y++)
+            {
+                var c = grid.Get(x, y);
+                if (!c.IsWater && !c.HasObstacle && c.height >= settings.plantMinHeight)
+                    _passableCellCount++;
+            }
+
         _plantStates = new PlantState[grid.size, grid.size];
 
-        // Piante permanenti (piazzate dall'editor)
         foreach (var entry in editorPlants)
         {
             if (entry.type != SpawnType.Plant) continue;
@@ -54,17 +63,16 @@ public class PlantManager : MonoBehaviour
 
             var state = new PlantState
             {
-                hasPlant    = true,
-                hasFruit    = true,
-                fruitTimer  = 0f,
+                hasPlant = true,
+                hasFruit = true,
+                fruitTimer = 0f,
                 isPermanent = true,
-                gridX       = cx,
-                gridY       = cy,
+                gridX = cx,
+                gridY = cy,
             };
             _plantStates[cx, cy] = state;
             _activePlantCount++;
 
-            // Istanzia GO per le piante permanenti (gestione visuale in simulazione)
             SpawnPlantGO(cx, cy, hasFruit: true);
         }
     }
@@ -79,6 +87,14 @@ public class PlantManager : MonoBehaviour
         float tickDt = _growthAccumulator;
         _growthAccumulator = 0f;
 
+        // ── Carrying capacity logistica ──────────────────────────────────────
+        // K = fraction × passableCells  (es. 0.35 × 1000 = 350 piante max)
+        float K = _settings.plantCarryingCapacityFraction * _passableCellCount;
+
+        // Fattore logistico (1 - N/K): va a 0 quando si avvicina a K.
+        // Clamp a 0 per sicurezza (non diventa negativo).
+        float logisticFactor = Mathf.Max(0f, 1f - (_activePlantCount / Mathf.Max(1f, K)));
+
         int n = _grid.size;
 
         for (int x = 0; x < n; x++)
@@ -86,22 +102,27 @@ public class PlantManager : MonoBehaviour
             {
                 var cell = _grid.Get(x, y);
 
-                // ── Condizioni per la crescita ────────────────────────────────
-                // Deve essere terra (non acqua), non ostruita, sopra la soglia minima
                 if (cell.IsWater || cell.HasObstacle) continue;
-                if (cell.height < _settings.plantMinHeight) continue;   // NO acqua/sabbia
+                if (cell.height < _settings.plantMinHeight) continue;
 
                 var state = _plantStates[x, y];
 
                 if (state == null || !state.hasPlant)
                 {
-                    float spawnProb = cell.fertility * _settings.plantGrowthRate * tickDt;
+                    // ── Spawn logistico ──────────────────────────────────────
+                    // Senza logisticFactor le piante riempivano tutto il mondo.
+                    // Ora il tasso di spawn crolla man mano che N → K.
+                    float spawnProb = cell.fertility
+                                    * _settings.plantGrowthRate
+                                    * tickDt
+                                    * logisticFactor;   // ← CHIAVE
+
                     if (Random.value < spawnProb)
                         SpawnPlant(x, y, permanent: false);
                 }
                 else
                 {
-                    // Frutti
+                    // Maturazione frutti
                     if (!state.hasFruit)
                     {
                         float fertMult = 0.5f + cell.fertility;
@@ -136,17 +157,17 @@ public class PlantManager : MonoBehaviour
     public bool TryEat(int cx, int cy, SimulationSettings settings)
     {
         if (!HasFruit(cx, cy)) return false;
-        var state      = _plantStates[cx, cy];
+        var state = _plantStates[cx, cy];
         state.hasFruit = false;
         state.fruitTimer = FruitRegrowTime(_grid.Get(cx, cy).fertility, settings);
-        SetFruitIndicator(cx, cy, false);   // nasconde il pallino rosso
+        SetFruitIndicator(cx, cy, false);
         return true;
     }
 
     public void GetFruitCellsInRadius(Vector2 posXZ, float radius, List<Vector2Int> results)
     {
         results.Clear();
-        int r  = Mathf.CeilToInt(radius / _cfg.cellSize) + 1;
+        int r = Mathf.CeilToInt(radius / _cfg.cellSize) + 1;
         int cx = Mathf.RoundToInt(posXZ.x / _cfg.cellSize);
         int cy = Mathf.RoundToInt(posXZ.y / _cfg.cellSize);
         float r2 = radius * radius;
@@ -158,8 +179,8 @@ public class PlantManager : MonoBehaviour
                 if (!_grid.IsInside(nx, ny)) continue;
                 if (!HasFruit(nx, ny)) continue;
 
-                float wx  = nx * _cfg.cellSize;
-                float wz  = ny * _cfg.cellSize;
+                float wx = nx * _cfg.cellSize;
+                float wz = ny * _cfg.cellSize;
                 float dxW = wx - posXZ.x, dzW = wz - posXZ.y;
                 if (dxW * dxW + dzW * dzW <= r2)
                     results.Add(new Vector2Int(nx, ny));
@@ -172,12 +193,12 @@ public class PlantManager : MonoBehaviour
     {
         var state = new PlantState
         {
-            hasPlant    = true,
-            hasFruit    = false,
-            fruitTimer  = FruitRegrowTime(_grid.Get(cx, cy).fertility, _settings),
+            hasPlant = true,
+            hasFruit = false,
+            fruitTimer = FruitRegrowTime(_grid.Get(cx, cy).fertility, _settings),
             isPermanent = permanent,
-            gridX       = cx,
-            gridY       = cy,
+            gridX = cx,
+            gridY = cy,
         };
         _plantStates[cx, cy] = state;
         _activePlantCount++;
@@ -185,10 +206,6 @@ public class PlantManager : MonoBehaviour
         SpawnPlantGO(cx, cy, hasFruit: false);
     }
 
-    /// <summary>
-    /// Istanzia il GO visivo della pianta e cerca il child "FruitIndicator".
-    /// Il prefab deve avere un figlio chiamato esattamente "FruitIndicator".
-    /// </summary>
     private void SpawnPlantGO(int cx, int cy, bool hasFruit)
     {
         if (plantPrefab == null || _plantObjects.ContainsKey((cx, cy))) return;
@@ -201,7 +218,6 @@ public class PlantManager : MonoBehaviour
             new Vector3(wx, wy, wz), Quaternion.identity, plantContainer);
         _plantObjects[(cx, cy)] = go;
 
-        // Cerca il child FruitIndicator (pallino rosso)
         var indicator = go.transform.Find("FruitIndicator")?.gameObject;
         if (indicator != null)
         {
@@ -213,7 +229,7 @@ public class PlantManager : MonoBehaviour
     private void KillPlant(int cx, int cy)
     {
         _plantStates[cx, cy] = null;
-        _activePlantCount    = Mathf.Max(0, _activePlantCount - 1);
+        _activePlantCount = Mathf.Max(0, _activePlantCount - 1);
 
         if (_plantObjects.TryGetValue((cx, cy), out var go))
         {

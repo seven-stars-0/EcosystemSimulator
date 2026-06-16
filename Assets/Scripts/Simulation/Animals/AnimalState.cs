@@ -11,6 +11,8 @@ public class AnimalState
     public float energy = 1.0f;
     public float hunger = 0.0f;
     public float thirst = 0.0f;
+    public float needThreshold = 0.65f;
+    public float matingRange = 5f;
 
     public Vector2 position;
     public Vector2 velocity;
@@ -36,11 +38,11 @@ public class AnimalState
         => energy > 0f && hunger < 1f && thirst < 1f;
 
     public bool CanMate(SimulationSettings s)
-        => energy >= genes.reproductionThreshold
+        => energy >= s.reproductionThreshold
         && reproductionCooldown <= 0f
         && age >= MATURITY_AGE;
+    // VEDI SE AGGIUNGERE hunger E thirst COME REQUISITI (ma non dovrebbe servire a causa dello SteeringSystem)
 
-    public float EnergyNormalized => energy / genes.EnergyMax;
     public float Speed => velocity.magnitude;
 
     // Serve per sapere se l'animale è un cucciolo (serve nel metabolismo)

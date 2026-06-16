@@ -183,8 +183,6 @@ public static class PerceptionSystem
         }
     }
 
-    // FISSA IL JITTERING DELL'ACQUA
-    // Sostituisci unicamente il metodo ComputeWater dentro PerceptionSystem.cs
     private static void ComputeWater(
         Vector2 pos, float range, WorldGrid grid, RenderConfig cfg,
         ref PerceptionData p)

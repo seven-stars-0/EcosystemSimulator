@@ -18,7 +18,7 @@ public static class ReproductionSystem
         if (a.species != b.species) return null;
 
         float dist = Vector2.Distance(a.position, b.position);
-        if (dist > a.genes.matingRange && dist > b.genes.matingRange) return null;
+        if (dist > a.matingRange && dist > b.matingRange) return null;
 
         // ── Blocco incesto di primo grado ─────────────────────────────────────
         if (AreCloselyRelated(a, b)) return null;

@@ -42,6 +42,7 @@ public class TerrainView : MonoBehaviour, IWorldView
 
     private void Rebuild(WorldGrid grid, RenderConfig cfg)
     {
+        if (grid == null) return;
         int n = grid.size;
 
         var vertices = new Vector3[n * n];
@@ -59,7 +60,7 @@ public class TerrainView : MonoBehaviour, IWorldView
                 float worldY = cell.height * cfg.heightScale;
 
                 vertices[i] = new Vector3(x * cfg.cellSize, worldY, y * cfg.cellSize);
-                colors[i] = HeightToColor(cell.height, cfg.heightScale);
+                colors[i] = HeightToColor(cell.height);
                 uvs[i] = new Vector2((float)x / (n - 1), (float)y / (n - 1));
             }
 
@@ -88,9 +89,9 @@ public class TerrainView : MonoBehaviour, IWorldView
     }
 
     // ── Color gradient ────────────────────────────────────────────────────────
-    // Il gradient usa heightScale per ricavare altezze mondo significative.
-    // Le soglie sono in unità logiche (come height in CellData).
-    private Color HeightToColor(float h, float hs)
+    // Le soglie sono in unità LOGICHE di height (le stesse di CellData.height),
+    // indipendenti da heightScale (che incide solo sulla geometria, non sul colore).
+    private Color HeightToColor(float h)
     {
         // Acqua
         if (h < -0.5f) return deepWater;

@@ -2,20 +2,12 @@ using UnityEngine;
 
 public class SpawnTool : IEditorTool
 {
-    public string ToolName => "Spawn";
-
     public SpawnableType CurrentSpawnable { get; set; } = SpawnableType.Prey;
     public bool          IsErasing        { get; set; } = false;
 
-    // Solo il dato puro — niente riferimenti a sistemi Unity
-    private readonly MapData _mapData;
+    private MapData Data => MapSession.Instance != null ? MapSession.Instance.CurrentMap : null;
 
-    public SpawnTool(MapData mapData)
-    {
-        _mapData = mapData;
-    }
-
-    // ── Ciclo vita ────────────────────────────────────────────────────────────
+    // Ciclo vita
 
     public void OnActivate()
     {
@@ -30,10 +22,8 @@ public class SpawnTool : IEditorTool
 
     public void OnClick(CellHit hit)     => Execute(hit);
     public void OnDragStart(CellHit hit) => Execute(hit);
-    public void OnDrag(CellHit hit)      { }
+    public void OnDrag(CellHit hit)      { } // Viene spawnata un'entità per click, non si può spammare tenendo premuto
     public void OnDragEnd(CellHit hit)   { }
-
-    // ── Logica ────────────────────────────────────────────────────────────────
 
     private void Execute(CellHit hit)
     {
@@ -41,9 +31,11 @@ public class SpawnTool : IEditorTool
         else           TryPlace(hit);
     }
 
+    // Chiama il metodo corretto in base al tipo di entità da spawnare
     private void TryPlace(CellHit hit)
     {
-        if (!IsCellValidForSpawn(hit.cell)) return;
+        if (!IsCellValidForSpawn(hit.cell)) return; // Escludiamo celle invalide (altezza < 0 oppure con un ostacolo)
+                                                    // Il caso del cercare di piazzare due entità nello stesso punto è gestito in PlaceEntity
 
         var builder = WorldSession.Instance.Builder;
 
@@ -67,13 +59,18 @@ public class SpawnTool : IEditorTool
         float wx = hit.worldPosition.x;
         float wz = hit.worldPosition.z;
 
-        bool occupied = _mapData.spawnEntries.Exists(e =>
+        var data = Data;
+        if (data == null) return;
+
+        // Se la cella è già occupata da un'altra entità, non possiamo piazzarla
+        bool occupied = data.spawnEntries.Exists(e =>
         {
             float dx = e.worldX - wx, dz = e.worldZ - wz;
             return Mathf.Sqrt(dx * dx + dz * dz) < cs * 0.5f;
         });
         if (occupied) return;
 
+        // Creiamo la SpawnEntry
         builder.PlaceEntity(new SpawnEntry
         {
             type   = ToSpawnType(CurrentSpawnable),
@@ -86,15 +83,16 @@ public class SpawnTool : IEditorTool
     private void TryErase(CellHit hit)
     {
         var builder = WorldSession.Instance.Builder;
+
         if (hit.cell.HasObstacle)
             builder.EraseObstacle(hit.x, hit.y);
         else
             builder.EraseEntity(hit.worldPosition.x, hit.worldPosition.z);
+
         MapSession.Instance.MarkDirty();
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
+    // Si possono piazzare entità solo in celle non-acqua e senza ostacoli
     public static bool IsCellValidForSpawn(CellData cell)
         => cell.height > 0f && !cell.HasObstacle;
 

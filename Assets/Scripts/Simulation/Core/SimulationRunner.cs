@@ -1,16 +1,20 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+// Orchestratore della simulazione in corso
 public class SimulationRunner : MonoBehaviour
 {
     public static SimulationRunner Instance { get; private set; }
 
-    [Header("Prefabs animali")]
-    public GameObject preyPrefab;
-    public GameObject predatorPrefab;
+    // Prefab di prede/predatori: UNICA fonte = AnimalSkinManager (con eventuali fallback)
+    // Se il manager manca, il prefab e' null e lo spawn viene saltato.
+    private GameObject PreyPrefabResolved
+        => AnimalSkinManager.Instance != null ? AnimalSkinManager.Instance.PreyPrefab : null;
+    private GameObject PredatorPrefabResolved
+        => AnimalSkinManager.Instance != null ? AnimalSkinManager.Instance.PredatorPrefab : null;
 
     [Header("Container")]
-    public Transform animalContainer;
+    public Transform animalContainer; // GO che contiene gli animali come figli
 
     [Range(0.5f, 10f)] public float timeScale = 1f;
     public bool paused = false;
@@ -24,10 +28,12 @@ public class SimulationRunner : MonoBehaviour
     private readonly List<Animal> _toAdd = new();
     private readonly List<Animal> _toRemove = new();
     private SpatialGrid<Animal> _spatial;
-    private readonly List<Animal> _queryBuf = new();
+
+    private readonly SimulationLogger _logger = new SimulationLogger(1f);  // 1 campionamento / s di default, si può cambiare in SimulationSettings (ParameterPanel)
 
     private int _nextId;
 
+    // Statistiche
     public int MaxPreyCount { get; private set; }
     public int MaxPredatorCount { get; private set; }
     public int PreyCount => _preyCount;
@@ -35,12 +41,9 @@ public class SimulationRunner : MonoBehaviour
     public int PlantCount => _plants?.ActivePlantCount ?? 0;
     public float ElapsedTime { get; private set; }
 
+    // Usati da PopulationGraphHUD per comporre i grafici
     private int _preyCount;
     private int _predatorCount;
-
-    // ── Immigrazione ──────────────────────────────────────────────────────────
-    private float _immigrationPreyTimer;
-    private float _immigrationPredTimer;
 
     private void Awake()
     {
@@ -48,319 +51,244 @@ public class SimulationRunner : MonoBehaviour
         Instance = this;
     }
 
-    // ── Start / Stop ──────────────────────────────────────────────────────────
-
-    public void StartSimulation(MapData data, PlantManager plants)
+    // 
+    public void StartSimulation(MapData data, PlantManager plants, bool logEnabled)
     {
+        // Inizializziamo i valori della simulazione
         _grid = data.grid;
         _cfg = WorldSession.Instance.Renderer.config;
         _settings = data.simulationSettings;
         _plants = plants;
         _nextId = 0;
         ElapsedTime = 0f;
-        _preyCount = 0;
-        _predatorCount = 0;
-        MaxPreyCount = 0;
-        MaxPredatorCount = 0;
+        _preyCount = 0; _predatorCount = 0;
+        MaxPreyCount = 0; MaxPredatorCount = 0;
 
-        // Immigrazione: parte già "pronta" così la prima immigrazione avviene
-        // dopo il primo interval, non subito.
-        _immigrationPreyTimer = _settings.immigrationInterval;
-        _immigrationPredTimer = _settings.immigrationInterval;
+        _spatial = new SpatialGrid<Animal>(5f);
 
-        _spatial = new SpatialGrid<Animal>(Mathf.Max(_settings.drinkingRange, 5f));
-
+        // Le piante piazzate manualmente dall'utente vengono spawnate da PlantManager
         plants.Initialize(_grid, _settings, _cfg, data.spawnEntries);
 
         _animals.Clear();
+        // Spawniamo tutti gli animali piazzati manualmente dall'utente con SpawnTool
         if (data.spawnEntries != null)
             foreach (var entry in data.spawnEntries)
                 if (entry.type == SpawnType.Prey || entry.type == SpawnType.Predator)
-                    SpawnAnimalFromEntry(entry);
+                {
+                    var sp = entry.type == SpawnType.Prey ? AnimalSpecies.Prey : AnimalSpecies.Predator;
+                    SpawnAnimalAt(sp, entry.worldX, entry.worldZ);
+                }
+
+        // Spawniamo randomicamente gli animali indicati dall'utente 
+        // Mathf.Max per essere sicuri di non usare valori negativi (anche se non è permesso farlo negli InputFields)
+        SpawnRandom(AnimalSpecies.Prey, Mathf.Max(0, data.randomPreyCount));
+        SpawnRandom(AnimalSpecies.Predator, Mathf.Max(0, data.randomPredatorCount));
+
+        // Inizializziamo il logger se l'utente sceglie di tenere traccia dei cambiamenti
+        if (logEnabled)
+            _logger.Begin(_settings, _preyCount, _predatorCount, PlantCount);
 
         paused = false;
-        Debug.Log($"[SimulationRunner] Started: {_preyCount} prey, {_predatorCount} predators.");
+        Debug.Log($"[SimulationRunner] Start: {_preyCount} prey, {_predatorCount} pred.");
     }
 
+    // Chiamato da SimulationSession (e indirettamente dalla UI)
     public void StopSimulation()
     {
+        // Il logging termina
+        _logger.End(MaxPreyCount, MaxPredatorCount, ElapsedTime);
+        // I GO degli animali vengono distrutti
         foreach (var a in _animals) if (a) Destroy(a.gameObject);
-        _animals.Clear();
-        _toAdd.Clear();
-        _toRemove.Clear();
-        _preyCount = 0;
-        _predatorCount = 0;
+        // Facciamo clear dei riferimenti agli animali
+        _animals.Clear(); _toAdd.Clear(); _toRemove.Clear();
+        _preyCount = 0; _predatorCount = 0;
         _plants?.Clear();
         _grid = null;
         paused = true;
         ElapsedTime = 0f;
     }
 
-    // ── Update loop ───────────────────────────────────────────────────────────
-
+    // Fa il Tick di tutte le entità e dei sistemi involti nel funzionamento delle 
     private void Update()
     {
+        // Se in pausa, non facciamo nulla
         if (paused || _grid == null) return;
 
         float dt = Time.deltaTime * timeScale;
         ElapsedTime += dt;
 
-        _plants.Tick(dt);
-
+        // Rebuild di SpatialGrid
         _spatial.Clear();
         foreach (var a in _animals)
-            if (a != null && a.IsAlive) _spatial.Insert(a.State.position, a);
+            if (a != null && a.IsAlive)
+                _spatial.Insert(a.State.position, a);
 
+        // Tick delle piante
+        _plants.Tick(dt);
+
+        // Tick degli animali
         foreach (var a in _animals)
         {
-            if (a == null || !a.IsAlive) { _toRemove.Add(a); continue; }
+            if (a == null || !a.IsAlive) continue;
             TickAnimal(a, dt);
         }
-
-        // ── Micro-immigrazione ────────────────────────────────────────────────
-        TickImmigration(dt);
 
         foreach (var n in _toAdd) AddAnimal(n);
         foreach (var d in _toRemove) RemoveAnimal(d);
         _toAdd.Clear();
         _toRemove.Clear();
 
+        // Aggiorniamo le statistiche
         if (_preyCount > MaxPreyCount) MaxPreyCount = _preyCount;
         if (_predatorCount > MaxPredatorCount) MaxPredatorCount = _predatorCount;
+
+        // Tick del log
+        _logger.Tick(ElapsedTime, _preyCount, _predatorCount, PlantCount);
     }
 
-    // ── Tick singolo animale ──────────────────────────────────────────────────
-
+    // Coordina i sistemi degli animali per determinare il comportamento
+    // Dipende dalla velocità della simulazione (dt)
     private void TickAnimal(Animal animal, float dt)
     {
-        var state = animal.State;
-        var perc = PerceptionSystem.Compute(animal, state, _grid, _cfg, _spatial, _plants, _settings, dt);
-        var accel = SteeringSystem.Compute(state, perc, _settings, _grid, _cfg);
-
+        // Movimento dell'animale
+        var s = animal.State;
+        var perc = PerceptionSystem.Compute(animal, s, _grid, _cfg, _spatial, _plants, _settings, dt);
+        var accel = SteeringSystem.Compute(s, in perc, _settings, _grid, _cfg);
         animal.ApplySteering(accel, dt);
-        MetabolismSystem.Tick(state, perc.currentSlope, _settings, dt);
 
-        if (state.species == AnimalSpecies.Prey)
-            animal.TryEatFruit(_plants, _settings);
-        else
-            TryAttack(animal, state);
+        // Metabolismo dell'animale
+        EcologySystem.Metabolize(s, _settings, dt);
 
-        animal.TryDrink(_settings, dt);
-
-        if (perc.mateFound && perc.mateCandidate != null)
-            TryReproduce(animal, perc.mateCandidate);
-
-        if (!state.IsAlive) _toRemove.Add(animal);
-    }
-
-    // ── TryAttack: predatore fallibile con Holling Type II ───────────────────
-
-    private void TryAttack(Animal predator, AnimalState pState)
-    {
-        // Il predatore non caccia se ha poca fame o è in cooldown
-        if (pState.hunger < 0.20f) return;
-        if (pState.attackCooldown > 0f) return;
-
-        _spatial.Query(pState.position, _settings.attackRange, _queryBuf);
-
-        foreach (var prey in _queryBuf)
+        bool reproduced;
+        if (s.species == AnimalSpecies.Prey)
         {
-            if (prey == predator || !prey.IsAlive) continue;
-            if (prey.State.species != AnimalSpecies.Prey) continue;
-            if (Vector2.Distance(pState.position, prey.State.position) > _settings.attackRange) continue;
+            EcologySystem.Graze(s, _plants, _settings, _grid, _cfg);
 
-            bool killSuccess = Random.value < _settings.killChance;
-
-            if (killSuccess)
-            {
-                // ── KILL RIUSCITO ─────────────────────────────────────────────
-                MetabolismSystem.Eat(pState, _settings);
-
-                // Handling Time: il predatore "mangia" la preda e non caccia
-                // per handlingTime secondi → risposta funzionale Holling II.
-                pState.attackCooldown = _settings.handlingTime;
-
-                _toRemove.Add(prey);
-            }
-            else
-            {
-                // ── ATTACCO FALLITO ───────────────────────────────────────────
-                // La preda riceve knockback e si allontana velocemente.
-                Vector2 knockDir = (prey.State.position - pState.position).normalized;
-                prey.State.velocity = knockDir * _settings.knockbackSpeed;
-
-                // Il predatore entra in mini-stun da sbilancio.
-                pState.attackCooldown = _settings.missStunDuration;
-            }
-
-            // Un attacco per tick (riuscito o meno) → break
-            break;
-        }
-    }
-
-    // ── Micro-Immigrazione ────────────────────────────────────────────────────
-
-    private void TickImmigration(float dt)
-    {
-        // ── Prede ─────────────────────────────────────────────────────────────
-        if (_preyCount < _settings.immigrationThreshold)
-        {
-            _immigrationPreyTimer -= dt;
-            if (_immigrationPreyTimer <= 0f)
-            {
-                _immigrationPreyTimer = _settings.immigrationInterval;
-                SpawnImmigrant(AnimalSpecies.Prey);
-                Debug.Log($"[Immigration] 1 preda immigrata ai bordi (pop={_preyCount})");
-            }
+            // FRENO LOGISTICO prede con TETTO DINAMICO:
+            //   K_eff = K0 / (1 + sensibilita' * N_predatori)
+            // Pochi predatori -> tetto alto (prede sbocciano)
+            // molti predatori -> tetto basso (prede compresse)
+            // Serve a generare le oscillazioni
+            float K0 = _settings.preyCarryingCapacity;
+            float Kprey = K0 / (1f + _settings.preyCapPredatorSensitivity * _predatorCount);
+            float logistic = Mathf.Clamp01(1f - _preyCount / Mathf.Max(1f, Kprey));
+            reproduced = Random.value < logistic && EcologySystem.TryReproduce(s, _settings);
         }
         else
         {
-            // Reset timer: se la popolazione si riprende, il conteggio riparte
-            _immigrationPreyTimer = _settings.immigrationInterval;
+            var killed = EcologySystem.Hunt(animal, s, _spatial, _settings);
+            if (killed != null) { killed.State.energy = 0f; _toRemove.Add(killed); }
+
+            // CAP PREDATORI - prede (Leslie-Gower): natalita' * (1 - P/(r*N)).
+            // La capacita' portante dei predatori scala col numero di prede:
+            // smorza l'overshoot (predatori sterminano le prede) e impedisce
+            // l'estinzione (con prede presenti il cap resta positivo).
+            float predK = Mathf.Max(1f, _settings.predatorFoodRatio * _preyCount);
+            float logisticPred = Mathf.Clamp01(1f - _predatorCount / predK);
+            reproduced = Random.value < logisticPred && EcologySystem.TryReproduce(s, _settings);
         }
 
-        // ── Predatori ─────────────────────────────────────────────────────────
-        if (_predatorCount < _settings.immigrationThreshold)
-        {
-            _immigrationPredTimer -= dt;
-            if (_immigrationPredTimer <= 0f)
-            {
-                _immigrationPredTimer = _settings.immigrationInterval;
-                SpawnImmigrant(AnimalSpecies.Predator);
-                Debug.Log($"[Immigration] 1 predatore immigrato ai bordi (pop={_predatorCount})");
-            }
-        }
-        else
-        {
-            _immigrationPredTimer = _settings.immigrationInterval;
-        }
+        if (reproduced) SpawnOffspring(animal);
+
+        // Morte: energia/fame al limite (metabolismo base) OPPURE, solo per predatori, mortalita' da SCARSITA' di prede (dipende dal rapporto prede/predatori)
+        // Per-individuo e stocastica -> niente coorti
+        // sincronizzate (niente "spalle")
+        // auto-limitante -> niente estinzione dei predatori finche' ci sono prede
+        //
+        // Questo serve perché, senza, i predatori sterminavano le prede riproducendosi a manetta nel processo
+        // E' un modo artificiale per gestire la popolazione di predatori, ma funziona bene per fortuna
+        bool scarcity = s.species == AnimalSpecies.Predator
+                        && EcologySystem.ScarcityDeath(_preyCount, _predatorCount, _settings, dt);
+        if (!s.IsAlive || scarcity)
+            _toRemove.Add(animal);
     }
 
-    private void SpawnImmigrant(AnimalSpecies species)
+    // Crea prole tramite gemmazione
+    private void SpawnOffspring(Animal parent)
     {
-        // Posizione casuale su uno dei 4 bordi della mappa
-        float maxW = (_grid.size - 1) * _cfg.cellSize;
-        float margin = _cfg.cellSize * 2f;
-
-        Vector2 pos = PickBorderPosition(maxW, margin);
-
-        // Cerca una cella terrestre valida vicino al bordo scelto
-        int cx = Mathf.RoundToInt(pos.x / _cfg.cellSize);
-        int cy = Mathf.RoundToInt(pos.y / _cfg.cellSize);
-        cx = Mathf.Clamp(cx, 0, _grid.size - 1);
-        cy = Mathf.Clamp(cy, 0, _grid.size - 1);
-
-        // Se la cella è acqua, cerca la più vicina passabile
-        if (_grid.Get(cx, cy).IsWater || _grid.Get(cx, cy).HasObstacle)
-        {
-            bool found = false;
-            for (int r = 1; r <= 5 && !found; r++)
-                for (int dx = -r; dx <= r && !found; dx++)
-                    for (int dy = -r; dy <= r && !found; dy++)
-                    {
-                        int nx = cx + dx, ny = cy + dy;
-                        if (!_grid.IsInside(nx, ny)) continue;
-                        if (_grid.Get(nx, ny).IsWater || _grid.Get(nx, ny).HasObstacle) continue;
-                        cx = nx; cy = ny; found = true;
-                    }
-            if (!found) return;  // nessuna cella valida trovata
-        }
-
-        float worldX = cx * _cfg.cellSize;
-        float worldZ = cy * _cfg.cellSize;
-
-        bool isPrey = species == AnimalSpecies.Prey;
-        GameObject prefab = isPrey ? preyPrefab : predatorPrefab;
+        var ps = parent.State;
+        var prefab = ps.species == AnimalSpecies.Prey ? PreyPrefabResolved : PredatorPrefabResolved;
         if (prefab == null) return;
 
-        float h = _grid.SampleHeight(cx, cy) * _cfg.heightScale;
-        var go = Instantiate(prefab,
-            new Vector3(worldX, h, worldZ),
-            Quaternion.identity, animalContainer);
+        // Posizione casuale di spawn della prole, entro un certo raggio dal genitore
+        Vector2 cpos = ps.position + Random.insideUnitCircle * 0.6f;
+        cpos.x = Mathf.Clamp(cpos.x, 0f, (_grid.size - 1) * _cfg.cellSize);
+        cpos.y = Mathf.Clamp(cpos.y, 0f, (_grid.size - 1) * _cfg.cellSize);
 
-        var animal = go.GetComponent<Animal>();
-        if (animal == null) { Destroy(go); return; }
-
-        var genes = isPrey ? GeneticProfile.RandomForPrey() : GeneticProfile.RandomForPredator();
-        animal.Initialize(species, worldX, worldZ, genes, _grid, _cfg, _settings, _nextId++);
-
-        // L'immigrante ha già il cooldown di riproduzione pieno (non si riproduce subito)
-        animal.State.reproductionCooldown = _settings.reproductionCooldown;
-
-        _toAdd.Add(animal);
-    }
-
-    private Vector2 PickBorderPosition(float maxW, float margin)
-    {
-        // 0=Top, 1=Bottom, 2=Left, 3=Right
-        switch (Random.Range(0, 4))
-        {
-            case 0: return new Vector2(Random.Range(0f, maxW), margin);
-            case 1: return new Vector2(Random.Range(0f, maxW), maxW - margin);
-            case 2: return new Vector2(margin, Random.Range(0f, maxW));
-            default: return new Vector2(maxW - margin, Random.Range(0f, maxW));
-        }
-    }
-
-    // ── Reproduzione ─────────────────────────────────────────────────────────
-
-    private void TryReproduce(Animal parentA, Animal parentB)
-    {
-        var genes = ReproductionSystem.TryMate(parentA.State, parentB.State, _settings);
-        if (genes == null) return;
-
-        var state = ReproductionSystem.CreateOffspring(
-            parentA.State, parentB.State, genes, _settings, _nextId++);
-
-        var prefab = parentA.State.species == AnimalSpecies.Prey ? preyPrefab : predatorPrefab;
-        if (prefab == null) return;
-
-        var go = Instantiate(prefab,
-            new Vector3(state.position.x, 0f, state.position.y),
-            Quaternion.identity, animalContainer);
+        // Creazione del GO del figlio, con altezza corretta
+        float h = _grid.SampleHeight(cpos.x / _cfg.cellSize, cpos.y / _cfg.cellSize) * _cfg.heightScale;
+        var go = Instantiate(prefab, new Vector3(cpos.x, h, cpos.y), Quaternion.identity, animalContainer);
+        go.transform.localScale *= (ps.species == AnimalSpecies.Predator ? _settings.predatorScale : _settings.preyScale);
         var child = go.GetComponent<Animal>();
         if (child == null) { Destroy(go); return; }
 
-        child.InitializeFromState(state, _grid, _cfg, _settings);
+        // Neonato sotto soglia + cooldown di maturazione per evitare che si riproduca istantaneamente
+        float childCooldown = ps.species == AnimalSpecies.Prey
+            ? _settings.preyReproCooldown
+            : _settings.predatorReproCooldown;
+
+        // Creazione dell'AnimalState
+        var st = new AnimalState
+        {
+            id = _nextId++,
+            species = ps.species,
+            genes = GeneticOps.Mutate(ps.genes, _settings), // Qui viene creato GeneticProfile con mutazioni
+            energy = _settings.offspringEnergy,
+            hunger = 0.3f,
+            reproductionCooldown = childCooldown,
+            position = cpos,
+            velocity = Vector2.zero,
+        };
+        child.InitializeFromState(st);
         _toAdd.Add(child);
     }
 
-    // ── Spawn da MapData ──────────────────────────────────────────────────────
-
-    private void SpawnAnimalFromEntry(SpawnEntry entry)
+    // Per spawnare gli animali piazzati a mano
+    private void SpawnAnimalAt(AnimalSpecies species, float worldX, float worldZ)
     {
-        bool isPrey = entry.type == SpawnType.Prey;
-        var species = isPrey ? AnimalSpecies.Prey : AnimalSpecies.Predator;
-        GameObject prefab = isPrey ? preyPrefab : predatorPrefab;
+        GameObject prefab = species == AnimalSpecies.Prey ? PreyPrefabResolved : PredatorPrefabResolved;
+        if (prefab == null) { Debug.LogWarning($"[SimulationRunner] Missing prefab for {species}"); return; }
 
-        if (prefab == null)
-        {
-            Debug.LogWarning($"[SimulationRunner] Missing prefab for {species}");
-            return;
-        }
-
-        float h = _grid.SampleHeight(entry.worldX / _cfg.cellSize, entry.worldZ / _cfg.cellSize)
-                  * _cfg.heightScale;
-        var go = Instantiate(prefab,
-            new Vector3(entry.worldX, h, entry.worldZ),
-            Quaternion.identity, animalContainer);
-
+        float h = _grid.SampleHeight(worldX / _cfg.cellSize, worldZ / _cfg.cellSize) * _cfg.heightScale;
+        var go = Instantiate(prefab, new Vector3(worldX, h, worldZ), Quaternion.identity, animalContainer);
+        go.transform.localScale *= (species == AnimalSpecies.Predator ? _settings.predatorScale : _settings.preyScale);
         var animal = go.GetComponent<Animal>();
-        if (animal == null)
-        {
-            Debug.LogError($"[SimulationRunner] Prefab {prefab.name} missing Animal component!");
-            Destroy(go);
-            return;
-        }
+        if (animal == null) { Debug.LogError($"[SimulationRunner] Prefab {prefab.name} missing Animal!"); Destroy(go); return; }
 
-        var genes = isPrey ? GeneticProfile.RandomForPrey() : GeneticProfile.RandomForPredator();
-        animal.Initialize(species, entry.worldX, entry.worldZ, genes, _grid, _cfg, _settings, _nextId++);
-        animal.State.reproductionCooldown = _settings.reproductionCooldown;
+        var genes = species == AnimalSpecies.Prey ? GeneticProfile.RandomForPrey() : GeneticProfile.RandomForPredator();
+        animal.Initialize(species, worldX, worldZ, genes, _nextId++);
+
+        // Cooldown di riproduzione INIZIALE sfalsato
+        // Serve perché, senza, la popolazione di entrambe le specie raddoppierebbe a t=0.
+        float initCd = species == AnimalSpecies.Prey ? _settings.preyReproCooldown : _settings.predatorReproCooldown;
+        animal.State.reproductionCooldown = Random.Range(0.5f, 1f) * initCd;
 
         AddAnimal(animal);
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // Spawna in celle casuali adatte il numero di prede e predatori indicato dall'utente in SpawmTool
+    private void SpawnRandom(AnimalSpecies species, int count)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            if (TryFindSuitableCell(out int cx, out int cy))
+                SpawnAnimalAt(species, cx * _cfg.cellSize, cy * _cfg.cellSize);
+            else { Debug.LogWarning("[SimulationRunner] Nessuna cella adatta per lo spawn."); break; }
+        }
+    }
+
+    // Una cella è adatta allo spawn se ha height > 0 e se non contiene ostacoli
+    private bool TryFindSuitableCell(out int cx, out int cy)
+    {
+        int n = _grid.size;
+        for (int attempt = 0; attempt < 200; attempt++)
+        {
+            int x = Random.Range(0, n), y = Random.Range(0, n);
+            var c = _grid.Get(x, y);
+            if (!c.IsWater && !c.HasObstacle && c.height > 0f) { cx = x; cy = y; return true; }
+        }
+        cx = cy = 0; return false;
+    }
 
     private void AddAnimal(Animal a)
     {
@@ -372,7 +300,7 @@ public class SimulationRunner : MonoBehaviour
     private void RemoveAnimal(Animal a)
     {
         if (a == null) return;
-        _animals.Remove(a);
+        if (!_animals.Remove(a)) return;
         if (a.State?.species == AnimalSpecies.Prey) _preyCount = Mathf.Max(0, _preyCount - 1);
         else _predatorCount = Mathf.Max(0, _predatorCount - 1);
         Destroy(a.gameObject);

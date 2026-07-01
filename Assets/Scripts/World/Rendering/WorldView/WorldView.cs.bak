@@ -1,0 +1,78 @@
+using UnityEngine;
+
+/// <summary>
+/// Base comune a tutte le view del mondo. Costruisce la mesh del terreno
+/// (griglia a vertici CONDIVISI: normali levigate + colore interpolato per
+/// vertice) e assegna il collider per il raycast. Le sottoclassi implementano
+/// SOLO come colorare ogni vertice (ColorForVertex).
+/// </summary>
+[RequireComponent(typeof(MeshFilter), typeof(MeshRenderer), typeof(MeshCollider))]
+public abstract class WorldView : MonoBehaviour, IWorldView
+{
+    private MeshFilter _mf;
+    private MeshCollider _mc;
+    private Mesh _mesh;
+
+    protected virtual string MeshName => "WorldViewMesh";
+
+    protected virtual void Awake()
+    {
+        _mf = GetComponent<MeshFilter>();
+        _mc = GetComponent<MeshCollider>();
+        _mesh = new Mesh { name = MeshName };
+        _mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+    }
+
+    public void Build(WorldGrid grid, RenderConfig cfg)   => Rebuild(grid, cfg);
+    public void Refresh(WorldGrid grid, RenderConfig cfg) => Rebuild(grid, cfg);
+    public void SetVisible(bool v) => gameObject.SetActive(v);
+
+    /// <summary>Colore di un vertice/cella. È l'UNICO punto che cambia tra le view.</summary>
+    protected abstract Color ColorForVertex(WorldGrid grid, int x, int y);
+
+    // Geometria identica per tutte le view: la superficie del terreno.
+    private void Rebuild(WorldGrid grid, RenderConfig cfg)
+    {
+        if (grid == null) return;
+        int n = grid.size;
+
+        var vertices  = new Vector3[n * n];
+        var colors    = new Color[n * n];
+        var uvs       = new Vector2[n * n];
+        var triangles = new int[(n - 1) * (n - 1) * 6];
+
+        for (int x = 0; x < n; x++)
+            for (int y = 0; y < n; y++)
+            {
+                int i = x + y * n;
+                var cell = grid.Get(x, y);
+                vertices[i] = new Vector3(x * cfg.cellSize, cell.height * cfg.heightScale, y * cfg.cellSize);
+                colors[i]   = ColorForVertex(grid, x, y);
+                uvs[i]      = new Vector2((float)x / (n - 1), (float)y / (n - 1));
+            }
+
+        int ti = 0;
+        for (int x = 0; x < n - 1; x++)
+            for (int y = 0; y < n - 1; y++)
+            {
+                int i = x + y * n;
+                triangles[ti++] = i;
+                triangles[ti++] = i + n;
+                triangles[ti++] = i + 1;
+                triangles[ti++] = i + 1;
+                triangles[ti++] = i + n;
+                triangles[ti++] = i + n + 1;
+            }
+
+        _mesh.Clear();
+        _mesh.vertices  = vertices;
+        _mesh.triangles = triangles;
+        _mesh.colors    = colors;
+        _mesh.uv        = uvs;
+        _mesh.RecalculateNormals();
+        _mesh.RecalculateBounds();
+
+        _mf.mesh = _mesh;
+        _mc.sharedMesh = _mesh;   // collider per il raycast dell'editor
+    }
+}

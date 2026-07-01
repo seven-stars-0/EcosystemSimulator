@@ -1,24 +1,8 @@
-// Assets/Scripts/UI/Widgets/ToolBars/SpawnToolBar.cs
 using UnityEngine;
 using UnityEngine.UI;
 
-/// <summary>
-/// Toolbar per SpawnTool.
-/// ToggleGroup seleziona il tipo da spawnare (5 opzioni).
-/// EraseToggle attiva la modalità cancellazione.
-///
-/// Layout prefab (VerticalLayoutGroup):
-///   ├─ EraseToggle      (Toggle) — "Cancella" — FUORI dal ToggleGroup
-///   └─ SpawnTypeGroup   (ToggleGroup)
-///       ├─ PreyToggle      "Preda"
-///       ├─ PredatorToggle  "Predatore"
-///       ├─ PlantToggle     "Pianta"
-///       ├─ TreeToggle      "Albero"
-///       └─ RockToggle      "Roccia"
-///
-/// Nota: EraseToggle deve essere un Toggle SEPARATO dal ToggleGroup,
-/// altrimenti la sua attivazione deseleziona quello del tipo corrente.
-/// </summary>
+// ToggleGroup seleziona il tipo da spawnare (5 opzioni + Erase mode)
+// Le icone di Preda/Predatore mostrano lo SPRITE della skin attualmente selezionata (AnimalSkinManager)
 public class SpawnToolBar : MonoBehaviour
 {
     [Header("Modalità")]
@@ -29,13 +13,36 @@ public class SpawnToolBar : MonoBehaviour
     [SerializeField] private Toggle treeToggle;
     [SerializeField] private Toggle rockToggle;
 
+    [Header("Icone skin (sprite selezionato)")]
+    [SerializeField] private Image preyIcon;
+    [SerializeField] private Image predatorIcon;
+
     private SpawnTool _tool;
 
+    private void OnEnable()
+    {
+        AnimalSkinManager.Instance.OnChanged += RefreshIcons;
+        RefreshIcons();
+    }
+
+    private void OnDisable()
+    {
+        AnimalSkinManager.Instance.OnChanged -= RefreshIcons;
+    }
+
+    private void RefreshIcons()
+    {
+        var m = AnimalSkinManager.Instance;
+
+        if (preyIcon     != null) preyIcon.sprite     = m.PreySprite;
+        if (predatorIcon != null) predatorIcon.sprite = m.PredatorSprite;
+    }
+
+    // Binding dei toggle UI a SpawnTool
     public void Bind(SpawnTool tool)
     {
         _tool = tool;
 
-        // Rimuovi listener vecchi (Bind può essere chiamata più volte)
         eraseToggle.onValueChanged.RemoveAllListeners();
         preyToggle.onValueChanged.RemoveAllListeners();
         predatorToggle.onValueChanged.RemoveAllListeners();
@@ -43,22 +50,20 @@ public class SpawnToolBar : MonoBehaviour
         treeToggle.onValueChanged.RemoveAllListeners();
         rockToggle.onValueChanged.RemoveAllListeners();
 
-        // Sincronizza con stato corrente del tool
-        eraseToggle.isOn = tool.IsErasing;
-        preyToggle.isOn = tool.CurrentSpawnable == SpawnableType.Prey;
+        eraseToggle.isOn    = tool.IsErasing;
+        preyToggle.isOn     = tool.CurrentSpawnable == SpawnableType.Prey;
         predatorToggle.isOn = tool.CurrentSpawnable == SpawnableType.Predator;
-        plantToggle.isOn = tool.CurrentSpawnable == SpawnableType.Plant;
-        treeToggle.isOn = tool.CurrentSpawnable == SpawnableType.Tree;
-        rockToggle.isOn = tool.CurrentSpawnable == SpawnableType.Rock;
+        plantToggle.isOn    = tool.CurrentSpawnable == SpawnableType.Plant;
+        treeToggle.isOn     = tool.CurrentSpawnable == SpawnableType.Tree;
+        rockToggle.isOn     = tool.CurrentSpawnable == SpawnableType.Rock;
 
-        // Erase toggle: non esclusivo con gli altri
         eraseToggle.onValueChanged.AddListener(v => _tool.IsErasing = v);
-
-        // Tipo spawn: attiva solo quando isOn = true (ToggleGroup garantisce esclusività)
         preyToggle.onValueChanged.AddListener(v => { if (v) _tool.CurrentSpawnable = SpawnableType.Prey; });
         predatorToggle.onValueChanged.AddListener(v => { if (v) _tool.CurrentSpawnable = SpawnableType.Predator; });
         plantToggle.onValueChanged.AddListener(v => { if (v) _tool.CurrentSpawnable = SpawnableType.Plant; });
         treeToggle.onValueChanged.AddListener(v => { if (v) _tool.CurrentSpawnable = SpawnableType.Tree; });
         rockToggle.onValueChanged.AddListener(v => { if (v) _tool.CurrentSpawnable = SpawnableType.Rock; });
+
+        RefreshIcons();
     }
 }

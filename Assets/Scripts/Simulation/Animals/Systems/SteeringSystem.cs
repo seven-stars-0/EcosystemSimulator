@@ -2,227 +2,152 @@ using UnityEngine;
 
 public static class SteeringSystem
 {
+    // Pesi di movimento (costanti di tuning del comportamento)
+    private const float WANDER        = 1.0f;
+    private const float PREY_ALIGN    = 0.9f;
+    private const float PREY_FOOD     = 1.8f;
+    private const float PREY_FLEE     = 3.0f;
+    private const float PRED_WANDER   = 1.4f;
+    private const float PRED_CHASE    = 2.4f;
+    private const float SEPARATION    = 1.3f;
+    private const float WATER_AVOID   = 3.0f;
+
+    // Mappatura urgenza -> velocita': |desired| >= CRUISE_REF -> velocita' piena;
+    // sotto, crociera proporzionale (mai sotto MIN_SPEED_FRAC, per non congelarsi).
+    private const float CRUISE_REF     = 3.0f;
+    private const float MIN_SPEED_FRAC = 0.3f;
+
     public static Vector2 Compute(
-        AnimalState state,
-        PerceptionData p,
-        SimulationSettings s,
-        WorldGrid grid,
-        RenderConfig cfg)
+        AnimalState state, in PerceptionData p, SimulationSettings s,
+        WorldGrid grid, RenderConfig cfg)
     {
+        // Prendiamo i geni che scaleranno le direzioni
         var g = state.genes;
-        Vector2 brain = Vector2.zero;
 
-        // 1. Calcolo repulsione bordi mappa
-        Vector2 borderRepulsion = ComputeBorderRepulsion(state.position, grid, cfg);
+        Vector2 border = ComputeBorderRepulsion(state.position, grid, cfg);
+        GetShoreInfo(state.position, grid, cfg, out Vector2 awayFromWater, out float minWaterDist);
 
-        // 2. Calcolo dati della costa in tempo reale per vicinanza fisica
-        GetShoreInfo(state.position, grid, cfg, out Vector2 shoreNormal, out float minWaterDist);
-        // Distanza approssimativa dal bordo reale della cella d'acqua
-        float distanceToShore = Mathf.Max(0f, minWaterDist - (cfg.cellSize * 0.5f));
+        Vector2 desired;
 
-        // ── CASO 1: EMERGENZA PREDATORE ───────────────────────────────────────
-        if (p.predatorNearby)
+        // Caso prede
+        if (state.species == AnimalSpecies.Prey)
         {
-            brain += p.fleeVector * g.w_flee;
-            brain += p.separationVector;
-            brain += borderRepulsion;
-
-            // Anche in fuga, se sta per schiantarsi in acqua, deviamo la forza a 90° lungo la riva
-            brain = DeflectForceAlongShore(brain, shoreNormal, distanceToShore, state.velocity, cfg.cellSize);
-
-            brain *= s.steeringForceScale;
-            return ClampToMaxSpeed(brain, g.maxSpeed);
-        }
-
-        // ── CASO 2: STATO DI BEVUTA (Ancoraggio alla sponda) ──────────────────
-        bool isDrinkingAtShore = (distanceToShore <= s.drinkingRange) && (state.thirst > state.needThreshold);
-
-        if (isDrinkingAtShore)
-        {
-            // L'animale è a portata di sorso: AZZERIAMO il cervello. Si ferma immobile a bere.
-            // Questo spegne sul nascere qualsiasi scatto o jittering.
-            brain = Vector2.zero;
-        }
-        else
-        {
-            // ── CASO 3: NAVIGAZIONE STANDARD ──────────────────────────────────
-            float hungerUrgency = (state.hunger > state.needThreshold && p.foodFound) ? state.hunger : 0f;
-            float thirstUrgency = (state.thirst > state.needThreshold && p.waterFound) ? state.thirst : 0f;
-
-            bool isInEmergency = hungerUrgency > state.needThreshold || thirstUrgency > state.needThreshold;
-
-            if (isInEmergency)
+            // Se c'è un predatore, la preda corre in direzione opposta
+            // tenendo anche conto della forza di separazione tra conspecifici (altrimenti si sovrappongono)
+            // e della wanderDir
+            if (p.predatorNearby)
             {
-                if (thirstUrgency > hungerUrgency)
-                    brain += p.toWater * g.w_water * (state.thirst * s.urgencyMax);
-                else
-                    brain += p.toFood * g.w_food * (state.hunger * s.urgencyMax);
+                desired = p.fleeDir * PREY_FLEE
+                        + p.separation * SEPARATION
+                        + p.wanderDir * (WANDER * 0.3f);
             }
             else
             {
-                if (state.CanMate(s) && p.mateFound)
-                    brain += p.mateVector * s.mateSeekingBoost;
-                else
-                    brain += p.socialVector * g.w_social;
+                // Peso del vettore toFood, viene scalato in base alla fame
+                float forage = Mathf.Clamp01(0.35f + state.hunger);
+                float social = g.social;
+
+                desired = p.wanderDir * WANDER
+                        + p.cohesionDir * social
+                        + p.alignmentDir * (Mathf.Max(0f, social) * PREY_ALIGN)
+                        + p.separation * SEPARATION
+                        + (p.foodFound ? p.toFood * (PREY_FOOD * forage) : Vector2.zero); // forage viene usati solo se c'è cibo
             }
-
-            // Forze fisse ambientali
-            brain += p.separationVector;
-            brain += borderRepulsion;
-
-            // RIMEDIO DISASTRO COSTIERO (w_slope):
-            // Se l'animale è in emergenza, OPPURE si trova molto vicino alla costa (entro 2 celle),
-            // disattiviamo completamente l'influenza della pendenza (w_slope).
-            // Questo impedisce che l'altezza negativa dell'acqua crei una trappola gravitazionale evolutiva.
-            if (!isInEmergency && distanceToShore > cfg.cellSize * 2f && p.slopeVector.sqrMagnitude > 0.001f)
-            {
-                brain += p.slopeVector.normalized * g.w_slope;
-            }
-
-            // Esplorazione (Wander)
-            float wanderWeight = isInEmergency ? 0f : 1.0f;
-            brain += p.wanderVector * Mathf.Max(0f, g.w_curiosity) * wanderWeight;
         }
-
-        // Se l'animale si sta muovendo (non sta bevendo) ed è vicino all'acqua, 
-        // intercettiamo la forza finale. Se punta verso l'acqua, la ruotiamo di 90° lungo la costa.
-        if (!isDrinkingAtShore)
+        // Caso predatori
+        else
         {
-            brain = DeflectForceAlongShore(brain, shoreNormal, distanceToShore, state.velocity, cfg.cellSize);
+            desired = p.wanderDir * PRED_WANDER
+                    + p.cohesionDir * g.social
+                    + p.separation * SEPARATION
+                    + (p.foodFound ? p.toFood * PRED_CHASE : Vector2.zero); // I predatori inseguono sempre (caccia NON scalata dalla fame)
         }
 
-        // Scaling finale e Clamping alla velocità massima dell'animale
-        brain *= s.steeringForceScale;
-        brain = ClampToMaxSpeed(brain, g.maxSpeed);
+        // Sommiamo a desired la repulsione dei bordi
+        desired += border;
 
-        // Lo sliding rimane attivo alla fine come "paracadute fisico" passivo
-        brain = ApplyWaterSliding(brain, state.position, grid, cfg);
+        // Gli animali evitano l'acqua. Questo serve per evitare un bug che mi ha fatto impazzire, dove gli animali si ammucchiavano
+        // lungo le coste, godendosi il tramonto con il proprio partner. E mannaggia se era piacevole, visto che preferivano morire di fame
+        // pur di non allontanarsi dalla costa
+        float avoidRange = cfg.cellSize * 2.5f;
+        if (minWaterDist < avoidRange && awayFromWater.sqrMagnitude > 1e-6f)
+            desired += awayFromWater * (WATER_AVOID * (1f - minWaterDist / avoidRange));
 
-        return brain;
+        Vector2 dir = desired.sqrMagnitude > 1e-6f ? desired.normalized : p.wanderDir;
+
+        // La MAGNITUDINE di 'desired' e' l'urgenza: forze deboli (solo wander) ->
+        // crociera lenta; forze forti (fuga/caccia/acqua) -> sprint fino a maxSpeed.
+        // Cosi' l'animale sceglie la velocita' e non corre sempre al massimo.
+        float urgency = Mathf.Clamp01(desired.magnitude / CRUISE_REF);
+        float speed   = g.maxSpeed * Mathf.Max(MIN_SPEED_FRAC, urgency);
+        Vector2 velCmd = dir * speed;
+
+        velCmd = ProjectAwayFromWater(velCmd, awayFromWater, minWaterDist, cfg.cellSize);
+        return velCmd;
     }
 
-    // Calcola se siamo vicini all'acqua e ricava il vettore Normale della costa (diretto verso la terra)
-    private static void GetShoreInfo(Vector2 pos, WorldGrid grid, RenderConfig cfg, out Vector2 shoreNormal, out float minDistanceToWater)
+    // Calcola nel raggio di 2 eventuali celle ad altezza negativa (acqua), e restituisce la distanza minima dall'acqua
+    // e il vettore direzione opposta
+    private static void GetShoreInfo(
+        Vector2 pos, WorldGrid grid, RenderConfig cfg,
+        out Vector2 awayFromWater, out float minDistanceToWater)
     {
-        shoreNormal = Vector2.zero;
+        awayFromWater = Vector2.zero;
         minDistanceToWater = float.MaxValue;
 
         int cx = Mathf.RoundToInt(pos.x / cfg.cellSize);
         int cy = Mathf.RoundToInt(pos.y / cfg.cellSize);
 
-        for (int dx = -1; dx <= 1; dx++)
-            for (int dy = -1; dy <= 1; dy++)
+        for (int dx = -2; dx <= 2; dx++)
+            for (int dy = -2; dy <= 2; dy++)
             {
                 int nx = cx + dx, ny = cy + dy;
                 if (!grid.IsInside(nx, ny)) continue;
                 if (!grid.Get(nx, ny).IsWater) continue;
 
-                float wx = nx * cfg.cellSize;
-                float wz = ny * cfg.cellSize;
+                float wx = nx * cfg.cellSize, wz = ny * cfg.cellSize;
                 float ddx = pos.x - wx, ddz = pos.y - wz;
                 float dist = Mathf.Sqrt(ddx * ddx + ddz * ddz);
 
-                if (dist < minDistanceToWater)
-                    minDistanceToWater = dist;
-
-                if (dist > 0.001f)
-                {
-                    // Accumula i vettori di allontanamento dall'acqua
-                    shoreNormal += new Vector2(ddx / dist, ddz / dist) * (cfg.cellSize / dist);
-                }
+                if (dist < minDistanceToWater) minDistanceToWater = dist;
+                if (dist > 0.01f)
+                    awayFromWater += new Vector2(ddx / dist, ddz / dist) / dist;
             }
 
-        if (shoreNormal.sqrMagnitude > 0.001f)
-            shoreNormal = shoreNormal.normalized;
+        if (awayFromWater.sqrMagnitude > 1e-6f) awayFromWater = awayFromWater.normalized;
     }
 
-    // Applica la rotazione di 90 gradi se la forza punta verso lo specchio d'acqua
-    private static Vector2 DeflectForceAlongShore(Vector2 force, Vector2 shoreNormal, float distanceToShore, Vector2 currentVelocity, float cellSize)
+    // Prende quanto calcolato in GetShoreInfo e restituisce la forza di repulsione, inversamente proporzionale
+    // alla distanza dall'acqua
+    private static Vector2 ProjectAwayFromWater(
+        Vector2 force, Vector2 awayFromWater, float distanceToShore, float cellSize)
     {
-        // Attiviamo il costeggiamento solo se siamo molto vicini all'acqua (es. entro 1.5 celle dal bordo)
-        if (distanceToShore > cellSize * 1.5f || shoreNormal.sqrMagnitude < 0.001f || force.sqrMagnitude < 0.001f)
+        if (distanceToShore > cellSize * 1.2f
+            || awayFromWater.sqrMagnitude < 1e-6f
+            || force.sqrMagnitude < 1e-6f)
             return force;
 
-        // Se il prodotto scalare tra la forza e la normale è negativo, significa che l'animale sta tentando 
-        // di camminare DENTRO l'acqua (vettori speculari)
-        if (Vector2.Dot(force, shoreNormal) < 0f)
-        {
-            // Calcoliamo le due possibili tangenti a 90 gradi (Sinistra e Destra rispetto alla costa)
-            Vector2 tangentLeft = new Vector2(-shoreNormal.y, shoreNormal.x);
-            Vector2 tangentRight = new Vector2(shoreNormal.y, -shoreNormal.x);
-
-            // Scegliamo la tangente che asseconda il movimento corrente dell'animale (Inerzia), 
-            // se è fermo assecondiamo la tendenza della forza stessa
-            Vector2 referenceDir = currentVelocity.sqrMagnitude > 0.01f ? currentVelocity : force;
-
-            Vector2 chosenTangent = Vector2.Dot(referenceDir, tangentLeft) > Vector2.Dot(referenceDir, tangentRight)
-                ? tangentLeft
-                : tangentRight;
-
-            // Ruotiamo la forza a 90° tenendo la stessa identica magnitudo (velocità di scorrimento)
-            return chosenTangent * force.magnitude;
-        }
-
+        float dot = Vector2.Dot(force, awayFromWater);
+        if (dot < 0f) force -= dot * awayFromWater;
         return force;
     }
 
-    private static Vector2 ClampToMaxSpeed(Vector2 force, float maxSpeed)
-    {
-        if (force.sqrMagnitude > maxSpeed * maxSpeed)
-            return force.normalized * maxSpeed;
-        return force;
-    }
-
-    private static Vector2 ApplyWaterSliding(Vector2 velocity, Vector2 pos, WorldGrid grid, RenderConfig cfg)
-    {
-        if (velocity.sqrMagnitude < 0.001f) return velocity;
-
-        int cx = Mathf.RoundToInt(pos.x / cfg.cellSize);
-        int cy = Mathf.RoundToInt(pos.y / cfg.cellSize);
-
-        Vector2 shoreNormal = Vector2.zero;
-
-        for (int dx = -1; dx <= 1; dx++)
-            for (int dy = -1; dy <= 1; dy++)
-            {
-                if (dx == 0 && dy == 0) continue;
-                int nx = cx + dx, ny = cy + dy;
-                if (!grid.IsInside(nx, ny)) continue;
-                if (!grid.Get(nx, ny).IsWater) continue;
-
-                float wx = nx * cfg.cellSize;
-                float wz = ny * cfg.cellSize;
-                float ddx = pos.x - wx, ddz = pos.y - wz;
-                float dist = Mathf.Sqrt(ddx * ddx + ddz * ddz);
-                if (dist < 0.001f) continue;
-
-                shoreNormal += new Vector2(ddx / dist, ddz / dist) * (cfg.cellSize / dist);
-            }
-
-        if (shoreNormal.sqrMagnitude < 0.001f) return velocity;
-        shoreNormal = shoreNormal.normalized;
-
-        float dot = Vector2.Dot(velocity, shoreNormal);
-        if (dot < 0f)
-        {
-            velocity -= dot * shoreNormal;
-        }
-
-        return velocity;
-    }
-
+    // Semplicissimo, calcola se le celle adiacenti sono bordo e mette in rep le direzioni opposte
+    // per evitare che gli animali cadano giù
+    // In Animal.ApplySteering viene completamente impedito che gli animali fuoriescano
+    // Infatti potrebbe succedere che un predatore insegue una preda verso i bordi, quindi il vettore fuga ha maggior peso
+    // rispetto a rep. Fidatevi, lo so molto bene
     private static Vector2 ComputeBorderRepulsion(Vector2 pos, WorldGrid grid, RenderConfig cfg)
     {
         float maxW = (grid.size - 1) * cfg.cellSize;
         float borderRadius = 4f * cfg.cellSize;
-        const float borderForce = 15f;
+        const float borderForce = 3f;
         Vector2 rep = Vector2.zero;
 
-        float dL = pos.x; if (dL < borderRadius) rep.x += borderForce * (1f - dL / borderRadius);
+        float dL = pos.x;        if (dL < borderRadius) rep.x += borderForce * (1f - dL / borderRadius);
         float dR = maxW - pos.x; if (dR < borderRadius) rep.x -= borderForce * (1f - dR / borderRadius);
-        float dB = pos.y; if (dB < borderRadius) rep.y += borderForce * (1f - dB / borderRadius);
+        float dB = pos.y;        if (dB < borderRadius) rep.y += borderForce * (1f - dB / borderRadius);
         float dT = maxW - pos.y; if (dT < borderRadius) rep.y -= borderForce * (1f - dT / borderRadius);
-
         return rep;
     }
 }

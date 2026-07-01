@@ -9,11 +9,9 @@ public class MainScreen : UIScreen
 
     protected override void Awake()
     {
-        base.Awake();   // già chiama HideImmediate — NO gameObject.SetActive ridondante
+        base.Awake();
         mapsButton.onClick.AddListener(() => UIManager.Instance.Show<MapSelectionScreen>());
         settingsButton.onClick.AddListener(() => UIManager.Instance.Show<GeneralSettingsScreen>());
         quitButton.onClick.AddListener(() => Application.Quit());
-
-        Debug.Log("SCRIPT MODIFICATO");
     }
 }

@@ -21,8 +21,7 @@ public class EditorHUD : UIScreen
     private TerrainTool _terrainTool;
     private SpawnTool   _spawnTool;
 
-    // ── Awake ─────────────────────────────────────────────────────────────────
-
+    // Binding dei bottoni
     protected override void Awake()
     {
         base.Awake();
@@ -33,11 +32,7 @@ public class EditorHUD : UIScreen
         spawnToggle   .onValueChanged.AddListener(on => { if (on) ActivateTool(EditorToolType.Spawn);   });
     }
 
-    // ── API pubblica ──────────────────────────────────────────────────────────
-
     public void PrepareForMap(MapData data) => _currentMap = data;
-
-    // ── Ciclo vita UIScreen ───────────────────────────────────────────────────
 
     protected override void OnShow()
     {
@@ -45,13 +40,12 @@ public class EditorHUD : UIScreen
 
         WorldSession.Instance.EnterEditor(_currentMap);
 
-        // Costruttori ora ricevono solo i dati puri
-        _terrainTool = new TerrainTool(_currentMap.grid);
-        _spawnTool   = new SpawnTool(_currentMap);
+        _terrainTool = new TerrainTool();
+        _spawnTool   = new SpawnTool();
 
         terrainToggle.SetIsOnWithoutNotify(true);
-        spawnToggle  .SetIsOnWithoutNotify(false);
-        ActivateTool(EditorToolType.Terrain);
+        spawnToggle.SetIsOnWithoutNotify(false);
+        ActivateTool(EditorToolType.Terrain); // Di default si apre con TerrainTool
     }
 
     protected override void OnHide()
@@ -59,8 +53,7 @@ public class EditorHUD : UIScreen
         WorldSession.Instance?.Editor.SetEnabled(false);
     }
 
-    // ── Tool selection ────────────────────────────────────────────────────────
-
+    // Attiva il tool selezionato, disattivando l'altro
     private void ActivateTool(EditorToolType type)
     {
         if (_terrainTool == null) return;
@@ -83,15 +76,15 @@ public class EditorHUD : UIScreen
         }
     }
 
-    // ── Back / Save / Settings ────────────────────────────────────────────────
-
+    // Configura SimulationSettingsScreen con i dati in MapData
     private void OnSettings()
     {
         var s = UIManager.Instance.GetScreen<SimulationSettingsScreen>();
         s.PrepareForMap(_currentMap);
         UIManager.Instance.Show(s);
     }
-
+    
+    // Chiede conferma di uscire se sono state apportate modifiche non salvate, altrimenti esce direttamente
     private void OnBack()
     {
         if (_currentMap?.metadata.isDirty == true)
@@ -102,6 +95,7 @@ public class EditorHUD : UIScreen
             ExitEditor();
     }
 
+    // Apre EnterValuePopup per inserire il nome della mappa
     private void OnSave()
     {
         if (_currentMap == null) return;

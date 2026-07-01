@@ -1,12 +1,16 @@
 using UnityEngine;
+using UnityEngine.UI;
 
 /// <summary>
 /// Panel per le impostazioni di WorldCamera.
-/// Ogni modifica viene applicata live alla camera (se attiva)
-/// e salvata in AppSettings.camera.
+/// Ogni modifica viene applicata live alla camera (se attiva) e salvata in
+/// AppSettings.camera. Il pulsante Reset ripristina i valori di default.
 /// </summary>
 public class CameraPanel : MonoBehaviour
 {
+    [Header("Reset")]
+    [SerializeField] private Button resetButton;
+
     [Header("Orbit")]
     [SerializeField] private SliderParam orbitSpeedXSlider;
     [SerializeField] private SliderParam orbitSpeedYSlider;
@@ -25,13 +29,19 @@ public class CameraPanel : MonoBehaviour
     [SerializeField] private SliderParam povEyeHeightSlider;
     [SerializeField] private SliderParam povSensitivitySlider;
 
+    private AppSettings _settings;
+
     public void Bind(AppSettings settings)
     {
+        _settings = settings;
         var c = settings.camera;
         var cam = WorldSession.Instance?.Camera;
 
-        // Helper locale per applicare il valore sia a CameraSettings che a WorldCamera live
-        void Set(ref float field, float value) { field = value; cam?.ApplySettings(c); }
+        if (resetButton != null)
+        {
+            resetButton.onClick.RemoveAllListeners();
+            resetButton.onClick.AddListener(ResetToDefaults);
+        }
 
         // ── Orbit ──────────────────────────────────────────────────────────────
         orbitSpeedXSlider.Setup("Orbit speed H", c.orbitSpeedX, 0.05f, 2f,
@@ -66,5 +76,19 @@ public class CameraPanel : MonoBehaviour
 
         povSensitivitySlider.Setup("POV sensitivity", c.povSensitivity, 0.02f, 1.5f,
             v => { c.povSensitivity = v; cam?.ApplySettings(c); });
+    }
+
+    public void ResetToDefaults()
+    {
+        if (_settings == null) return;
+        UIManager.Instance.ShowConfirm(
+            "Reset camera settings to their default values?",
+            onConfirm: () =>
+            {
+                _settings.camera = new CameraSettings();                       // default
+                WorldSession.Instance?.Camera?.ApplySettings(_settings.camera); // applica live
+                AppSettingsManager.Instance?.Save();                            // persisti
+                Bind(_settings);                                                // ridisegna gli slider
+            });
     }
 }

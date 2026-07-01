@@ -1,4 +1,3 @@
-// Assets/Scripts/Rendering/WorldRenderer.cs
 using System;
 using UnityEngine;
 
@@ -18,7 +17,7 @@ public class WorldRenderer : MonoBehaviour
 
     [Header("Views")]
     public TerrainView terrainView;
-    public SpawnOverlayView spawnOverlayView;
+    public SpawnView spawnOverlayView;
 
     private WorldGrid _grid;
     private DirtyFlags _dirty = DirtyFlags.None;
@@ -26,6 +25,11 @@ public class WorldRenderer : MonoBehaviour
     public void Initialize(WorldGrid grid)
     {
         _grid = grid;
+        if (terrainView == null || spawnOverlayView == null)
+        {
+            Debug.LogError("[WorldRenderer] View non collegate nell'Inspector (terrainView/spawnView).");
+            return;
+        }
         terrainView.SetVisible(true);
         spawnOverlayView.SetVisible(false);
         terrainView.Build(_grid, config);
@@ -50,10 +54,13 @@ public class WorldRenderer : MonoBehaviour
     private void LateUpdate()
     {
         if (_grid == null || _dirty == DirtyFlags.None) return;
+
         if (_dirty.HasFlag(DirtyFlags.Terrain))
             terrainView.Refresh(_grid, config);
+
         if (_dirty.HasFlag(DirtyFlags.SpawnOverlay) && spawnOverlayView.gameObject.activeSelf)
             spawnOverlayView.Refresh(_grid, config);
+
         _dirty = DirtyFlags.None;
     }
 }

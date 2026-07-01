@@ -1,26 +1,22 @@
-/// <summary>
-/// Contratto per tutti i tool dell'editor di mappe.
-/// WorldEditor gestisce l'input e delega al tool attivo.
-/// </summary>
+// Contratto per tutti i tool dell'editor di mappe.
+// WorldEditor gestisce l'input e delega al tool attivo.
 public interface IEditorTool
 {
-    string ToolName { get; }   // per la UI
-
-    /// <summary>Chiamato una volta quando il tool diventa attivo.</summary>
+    // Chiamato una volta quando il tool diventa attivo
     void OnActivate();
 
-    /// <summary>Chiamato una volta quando il tool viene disattivato.</summary>
+    // Chiamato una volta quando il tool viene disattivato
     void OnDeactivate();
 
-    /// <summary>Click singolo (mouse giù e su senza drag).</summary>
+    // Click singolo (mouse giù e su senza drag)
     void OnClick(CellHit hit);
 
-    /// <summary>Inizio drag.</summary>
+    // Inizio drag
     void OnDragStart(CellHit hit);
 
-    /// <summary>Drag in corso (chiamato ogni frame con il mouse giù).</summary>
+    // Drag in corso (chiamato ogni frame con il mouse giù)
     void OnDrag(CellHit hit);
 
-    /// <summary>Fine drag.</summary>
+    // Fine drag
     void OnDragEnd(CellHit hit);
 }

@@ -1,16 +1,13 @@
-// Assets/Scripts/Data/MapData.cs
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 
-/// <summary>
 /// Struttura dati principale del progetto.
 /// Contiene tutto il necessario per ricostruire un mondo:
 /// metadati, griglia, impostazioni di simulazione, e lista di entità da spawnare.
 ///
 /// Serializzata in JSON da MapSaveManager.
 /// Accessibile a runtime via MapSession.CurrentMap.
-/// </summary>
 [Serializable]
 public class MapData
 {
@@ -19,6 +16,11 @@ public class MapData
     public SimulationSettings simulationSettings;
     public List<SpawnEntry> spawnEntries;
 
+    // Spawn casuale all'avvio: oltre agli SpawnEntry piazzati a mano, vengono
+    // generati questi N prede e M predatori in celle adatte (height>0 e senza ostacoli)
+    public int randomPreyCount;
+    public int randomPredatorCount;
+
     public MapData()
     {
         metadata = new MapMetadata();
@@ -26,9 +28,7 @@ public class MapData
         spawnEntries = new List<SpawnEntry>();
     }
 
-    /// <summary>
-    /// Crea una MapData nuova con griglia vuota e settings di default.
-    /// </summary>
+    // Crea una MapData nuova con griglia vuota e settings di default.
     public static MapData CreateEmpty(string name, int gridSize = 32)
     {
         var data = new MapData

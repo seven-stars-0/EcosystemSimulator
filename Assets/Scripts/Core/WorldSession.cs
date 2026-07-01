@@ -26,19 +26,20 @@ public class WorldSession : MonoBehaviour
     {
         MapSession.Instance.SetMap(map);
         worldBuilder.BuildForEditor(map);
-        IsActive = true;
-
-        // Applica skybox e impostazioni camera ogni volta che si entra nel mondo
-        AppSettingsManager.Instance?.ApplySkybox();
-        AppSettingsManager.Instance?.ApplyCameraSettings();
+        FinishEnter();
     }
 
     public void EnterSimulation(MapData map)
     {
         MapSession.Instance.SetMap(map);
         worldBuilder.BuildForSimulation(map);
-        IsActive = true;
+        FinishEnter();
+    }
 
+    // Passi comuni a editor e simulazione: applica skybox e camera dalle AppSettings.
+    private void FinishEnter()
+    {
+        IsActive = true;
         AppSettingsManager.Instance?.ApplySkybox();
         AppSettingsManager.Instance?.ApplyCameraSettings();
     }

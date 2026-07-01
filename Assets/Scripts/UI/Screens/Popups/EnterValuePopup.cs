@@ -3,6 +3,11 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 
+// Permette di inserire valori all'utente
+// Viene usato per dare nome alla mappa quando si salva, e per decidere le dimensioni della mappa
+//
+// Molto simile agli altri popup, con due callback diversi in base alla modalità in cui viene chiamato
+// e con due panel diversi per modalità, mostrati in modo mutualmente esclusivo
 public class EnterValuePopup : Popup
 {
     [SerializeField] private TMP_Text titleText;
@@ -29,8 +34,6 @@ public class EnterValuePopup : Popup
         confirmButton.onClick.AddListener(OnConfirm);
         cancelButton.onClick.AddListener(ClosePopup);
     }
-
-    // ── API ───────────────────────────────────────────────────────────────────
 
     public void RequestString(string title, string initial, Action<string> onConfirm)
     {
@@ -63,17 +66,17 @@ public class EnterValuePopup : Popup
         OpenPopup();
     }
 
-    // ── Internal ──────────────────────────────────────────────────────────────
-
     private void OnConfirm()
     {
+        // Caso string
         if (_onString != null)
         {
             string val = stringField.text.Trim();
-            if (string.IsNullOrEmpty(val)) return;  // non chiudersi se il campo è vuoto
+            if (string.IsNullOrEmpty(val)) return;  // Non si chiude se il campo è vuoto
             ClosePopup();
             _onString.Invoke(val);
         }
+        // Caso int
         else
         {
             ClosePopup();

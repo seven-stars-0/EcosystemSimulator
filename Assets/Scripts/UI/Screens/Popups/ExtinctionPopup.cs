@@ -16,6 +16,7 @@ public class ExtinctionPopup : Popup
 
     private MapData _lastMap;
 
+    // Si collega all'evento di estinzione lanciato da SimulationSession
     protected override void Awake()
     {
         SimulationSession.OnExtinctionEvent += Show;
@@ -31,8 +32,7 @@ public class ExtinctionPopup : Popup
         SimulationSession.OnExtinctionEvent -= Show;
     }
 
-    // ── Mostra il popup ───────────────────────────────────────────────────────
-
+    // Mostra le statistiche della simulazione
     private void Show(float elapsed, int maxPrey, int maxPred)
     {
         _lastMap = MapSession.Instance.CurrentMap;
@@ -45,14 +45,12 @@ public class ExtinctionPopup : Popup
         OpenPopup();
     }
 
-    // ── Azioni ────────────────────────────────────────────────────────────────
-
     private void OnQuit()
     {
         ClosePopup();
         SimulationSession.Instance.Stop();
 
-        // MapSelection con MainScreen nella history: Back funziona
+        // MapSelection con MainScreen nella history
         UIManager.Instance.NavigateClean<MapSelectionScreen>(
             UIManager.Instance.GetScreen<MainScreen>()
         );
@@ -68,8 +66,7 @@ public class ExtinctionPopup : Popup
         var hud = UIManager.Instance.GetScreen<EditorHUD>();
         hud.PrepareForMap(_lastMap);
 
-        // EditorHUD con [MainScreen, MapSelectionScreen] nella history:
-        // Back → MapSelectionScreen → Back → MainScreen
+        // EditorHUD con [MainScreen, MapSelectionScreen] nella history
         UIManager.Instance.NavigateClean<EditorHUD>(
             UIManager.Instance.GetScreen<MainScreen>(),
             UIManager.Instance.GetScreen<MapSelectionScreen>()
@@ -82,7 +79,7 @@ public class ExtinctionPopup : Popup
         if (_lastMap == null) return;
 
         WorldSession.Instance.EnterSimulation(_lastMap);
-        SimulationSession.Instance.Begin(_lastMap);
+        SimulationSession.Instance.Begin(_lastMap, SimulationSession.Instance.LastLogEnabled);
 
         // SimulationHUD con [MainScreen, MapSelectionScreen] nella history
         UIManager.Instance.NavigateClean<SimulationHUD>(

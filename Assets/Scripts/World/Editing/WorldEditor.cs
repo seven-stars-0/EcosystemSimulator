@@ -4,16 +4,16 @@ using UnityEngine.InputSystem;
 
 public class WorldEditor : MonoBehaviour
 {
-    [Header("References")]
-    public WorldGrid grid;
-    public WorldRenderer renderer;
-    public Camera editorCamera;
+    private WorldGrid grid => MapSession.Instance != null ? MapSession.Instance.CurrentMap?.grid : null;
+
+    private WorldRenderer worldRenderer => WorldSession.Instance.Renderer;
+    private Camera        editorCamera  => WorldSession.Instance.Camera.mainCamera; // Serve solo per i raycast
 
     private IEditorTool _activeTool;
     private bool _dragging;
     private bool _editorEnabled = true;
 
-    // ── API pubblica ──────────────────────────────────────────────────────────
+    // API pubblica
 
     public void SetTool(IEditorTool tool)
     {
@@ -29,7 +29,6 @@ public class WorldEditor : MonoBehaviour
         if (!enabled) _activeTool?.OnDeactivate();
     }
 
-    // ── Update ────────────────────────────────────────────────────────────────
 
     private void Update()
     {
@@ -40,26 +39,29 @@ public class WorldEditor : MonoBehaviour
 
     private void HandleMouseInput()
     {
-        // ── BLOCCO UI: se il mouse è su un elemento UI, non processare input ──
-        // Questo risolve: tool attivo mentre si clicca su pannelli/slider/toggle
+        // BLOCCO UI: se il mouse è su un elemento UI, non processare input
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
         {
-            // Se era in drag e il mouse va sulla UI (improbabile ma gestito),
-            // termina il drag in modo pulito
+            // Se era in drag e il mouse va sulla UI termina il drag in modo pulito
             if (_dragging)
             {
                 _dragging = false;
                 // Ricalcola gradienti se il drag era su TerrainTool
+                /*
                 if (_activeTool is TerrainTool)
                     grid?.RecalculateGradients();
+                */
             }
             return;
         }
+
+        if (Mouse.current == null) return;
 
         bool leftDown = Mouse.current.leftButton.wasPressedThisFrame;
         bool leftHeld = Mouse.current.leftButton.isPressed;
         bool leftReleased = Mouse.current.leftButton.wasReleasedThisFrame;
 
+        // Le tre fasi di input con il click sinistro
         if (leftDown)
         {
             CellHit hit = Raycast();
@@ -89,8 +91,8 @@ public class WorldEditor : MonoBehaviour
         if (!Physics.Raycast(ray, out RaycastHit hit))
             return new CellHit { valid = false };
 
-        int x = Mathf.RoundToInt(hit.point.x / renderer.config.cellSize);
-        int y = Mathf.RoundToInt(hit.point.z / renderer.config.cellSize);
+        int x = Mathf.RoundToInt(hit.point.x / worldRenderer.config.cellSize);
+        int y = Mathf.RoundToInt(hit.point.z / worldRenderer.config.cellSize);
 
         if (!grid.IsInside(x, y))
             return new CellHit { valid = false };

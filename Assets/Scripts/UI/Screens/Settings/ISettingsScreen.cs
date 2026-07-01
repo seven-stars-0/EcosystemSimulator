@@ -22,8 +22,6 @@ public abstract class ISettingsScreen : UIScreen
         }
     }
 
-    // ── Ciclo vita — comune a tutte le settings screen ────────────────────────
-
     protected override void OnShow()
     {
         InputGuard.CameraInputBlocked = true;
@@ -37,22 +35,18 @@ public abstract class ISettingsScreen : UIScreen
         OnUnbind();
     }
 
-    // ── Template method per le sottoclassi ───────────────────────────────────
+    // Template method per le sottoclassi
 
-    /// <summary>
-    /// Chiamato appena prima che la schermata diventi visibile.
-    /// Le sottoclassi inizializzano/aggiornano i propri panel qui.
-    /// </summary>
+    // Chiamato appena prima che la schermata diventi visibile.
+    // Le sottoclassi inizializzano/aggiornano i propri panel qui
     protected virtual void OnBind() { }
 
-    /// <summary>
-    /// Chiamato quando la schermata viene nascosta.
-    /// Le sottoclassi possono persistere modifiche, segnare dirty flag, ecc.
-    /// </summary>
+    // Chiamato quando la schermata viene nascosta.
+    // Le sottoclassi possono persistere modifiche, segnare dirty flag, ecc.
     protected virtual void OnUnbind() { }
 
-    // ── Helper ────────────────────────────────────────────────────────────────
 
+    // Mostra la tab premuta
     protected void ShowTab(int index)
     {
         for (int j = 0; j < tabPanels.Length; j++)

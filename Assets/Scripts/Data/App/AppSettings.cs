@@ -5,6 +5,8 @@ public class AppSettings
 {
     public CameraSettings camera = new CameraSettings();
     public int skyboxIndex = 0;
+    public int preyAnimalIndex = 0;
+    public int predatorAnimalIndex = 1;
 }
 
 [Serializable]

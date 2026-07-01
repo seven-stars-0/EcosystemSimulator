@@ -8,6 +8,11 @@ public class MapSaveManager : MonoBehaviour
 {
     public static MapSaveManager Instance { get; private set; }
 
+    // Versione dello schema dei parametri (SimulationSettings/MapData).
+    // Questo è servito per gestire le differenze tra versione 0 (la precedente) e la 1 (definitiva)
+    // Non serve più, ma lo lascio per ipotetiche versioni future
+    public const int CurrentSchemaVersion = 1;
+
     private string MapsFolder
     {
         get
@@ -28,24 +33,28 @@ public class MapSaveManager : MonoBehaviour
         Instance = this;
     }
 
-    // ── Lista mappe ───────────────────────────────────────────────────────────
+    // Lista mappe
 
-    /// <summary>
-    /// Restituisce i metadati di tutte le mappe salvate.
-    /// Deserializza MapData completa ma ritorna solo il campo metadata —
-    /// evita di caricare la griglia intera solo per mostrare la lista.
-    /// </summary>
+    /// Metadati di tutte le mappe salvate. Deserializza MapData completa ma
+    /// ritorna solo il campo metadata per evitare di tenere in RAM tutte le griglie.
+    /// I file illeggibili vengono saltati con un warning.
     public List<MapMetadata> LoadAllMetadata()
     {
         var result = new List<MapMetadata>();
 
-        foreach (var file in Directory.GetFiles(MapsFolder, "*.json"))
+        string[] files;
+        try { files = Directory.GetFiles(MapsFolder, "*.json"); }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[MapSaveManager] Couldn't enlist the maps: {e.Message}");
+            return result;
+        }
+
+        foreach (var file in files)
         {
             try
             {
-                string json = File.ReadAllText(file);
-                MapData data = JsonConvert.DeserializeObject<MapData>(json);
-
+                MapData data = JsonConvert.DeserializeObject<MapData>(File.ReadAllText(file));
                 if (data?.metadata != null)
                 {
                     data.metadata.filePath = file;
@@ -54,64 +63,119 @@ public class MapSaveManager : MonoBehaviour
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[MapSaveManager] Errore lettura {file}: {e.Message}");
+                Debug.LogWarning($"[MapSaveManager] Error reading {file}: {e.Message}");
             }
         }
 
         return result;
     }
 
-    /// <summary>Carica la MapData completa da file.</summary>
+    // Carica la singola MapData completa che è stata selezionata
     public MapData Load(string filePath)
     {
-        string json = File.ReadAllText(filePath);
-        MapData data = JsonConvert.DeserializeObject<MapData>(json);
-        if (data != null)
+        try
         {
-            data.metadata.filePath = filePath;
+            MapData data = JsonConvert.DeserializeObject<MapData>(File.ReadAllText(filePath));
+            if (data == null) return null;
+
+            if (data.metadata != null)
+            {
+                data.metadata.filePath = filePath;
+
+                // In caso vengano caricate mappe con schemaVersion inferiore a quello attuale
+                if (data.metadata.schemaVersion < CurrentSchemaVersion)
+                    Debug.LogWarning(
+                        $"[MapSaveManager] '{Path.GetFileName(filePath)}' has an old schema" +
+                        $"(v{data.metadata.schemaVersion} < v{CurrentSchemaVersion}): simulation parameters " +
+                        $"could be obsolete. Press the RESET button in ParameterPanel to adapt to current schema version.");
+            }
             data.grid?.EnsureSlopesUpToDate();
+            return data;
         }
-        return data;
+        catch (Exception e)
+        {
+            Debug.LogError($"[MapSaveManager] Load failed ({filePath}): {e.Message}");
+            return null;
+        }
     }
 
-    /// <summary>Salva una MapData.</summary>
-    // In MapSaveManager.Save() — sostituisci il metodo
-
-    public void Save(MapData data)
+    // Salva una MapData (scrittura atomica). Ritorna true se riuscito
+    public bool Save(MapData data)
     {
-        data.grid.RecalculateGradients(); // bake slopes once into JSON
+        if (data?.metadata == null)
+        {
+            Debug.LogWarning("[MapSaveManager] Save failed: data or metadata are null.");
+            return false;
+        }
 
-        string safeFileName = MakeSafeFileName(data.metadata.mapName);
-        string newFilePath = Path.Combine(MapsFolder, safeFileName + ".json");
+        // Tecnicamente non serve più, ma lo lascio qui per eventuali future migliorie
+        // data.grid?.RecalculateGradients();   // bake degli slope nel JSON (no-op se grid null)
 
-        // Se esiste un file precedente con nome diverso, cancellalo
+        string newFilePath = Path.Combine(MapsFolder, MakeSafeFileName(data.metadata.mapName) + ".json");
+
+        // Se la mappa era salvata con un nome diverso, rimuove il vecchio file.
         if (!string.IsNullOrEmpty(data.metadata.filePath)
             && data.metadata.filePath != newFilePath
             && File.Exists(data.metadata.filePath))
         {
-            File.Delete(data.metadata.filePath);
-            Debug.Log($"[MapSaveManager] Vecchio file rimosso: {data.metadata.filePath}");
+            try { File.Delete(data.metadata.filePath); }
+            catch (Exception e) { Debug.LogWarning($"[MapSaveManager] Failed to remove old-name map: {e.Message}"); }
         }
 
-        data.metadata.filePath = newFilePath;
-        data.metadata.savedAt = DateTime.Now.ToString("o");
+        data.metadata.filePath      = newFilePath;
+        data.metadata.savedAt       = DateTime.Now.ToString("o");
+        data.metadata.schemaVersion = CurrentSchemaVersion;
 
-        string json = JsonConvert.SerializeObject(data, Formatting.Indented);
-        File.WriteAllText(newFilePath, json);
+        try
+        {
+            string json = JsonConvert.SerializeObject(data, Formatting.Indented);
 
-        data.metadata.isDirty = false;
-        Debug.Log($"[MapSaveManager] Salvato: {newFilePath}");
+            // Scrittura ATOMICA: scrivi su file temporaneo, poi sostituisci.
+            // Se il processo muore a metà, il file originale resta intatto.
+            string tmp = newFilePath + ".tmp";
+            File.WriteAllText(tmp, json);
+
+            // IMPORTANTE: Questo IF ha come conseguenza il rimpiazzamento di eventuali mappe con lo stesso nome ma semanticamente diverse
+            if (File.Exists(newFilePath)) File.Replace(tmp, newFilePath, null);
+            else                          File.Move(tmp, newFilePath);
+
+            data.metadata.isDirty = false;
+            Debug.Log($"[MapSaveManager] Saved: {newFilePath}");
+            return true;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"[MapSaveManager] Save failed ({newFilePath}): {e.Message}");
+            return false;
+        }
     }
 
-    /// <summary>Elimina una mappa dal disco.</summary>
+    /// Elimina una mappa dal disco
     public void Delete(MapMetadata meta)
     {
-        if (File.Exists(meta.filePath))
-            File.Delete(meta.filePath);
+        if (meta == null || string.IsNullOrEmpty(meta.filePath)) return;
+        try
+        {
+            if (File.Exists(meta.filePath)) File.Delete(meta.filePath);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[MapSaveManager] Delete failed: {e.Message}");
+        }
     }
 
+    // Nome file sicuro dal nome mappa. Modifiche rispetto al nome visualizzato dall'utente:
+    // 1. split sui caratteri non validi per il filesystem(join con "_")
+    // 2. sostituzione degli spazi con "_"
+    // 3. lowercase
+    //
+    // (3) ha come conseguenza che due mappe con le stesse lettere ma con diversi uppercase vengono mappate nello stesso nome
+    // Fallback "map" se il risultato è vuoto.
     private static string MakeSafeFileName(string name)
-        => string.Join("_", name.Split(Path.GetInvalidFileNameChars()))
-                 .Replace(" ", "_")
-                 .ToLower();
+    {
+        string safe = string.Join("_", (name ?? "").Split(Path.GetInvalidFileNameChars()))
+                            .Replace(" ", "_")
+                            .ToLower();
+        return string.IsNullOrEmpty(safe) ? "map" : safe;
+    }
 }

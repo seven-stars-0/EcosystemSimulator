@@ -11,17 +11,15 @@ public class SimulationHUD : UIScreen
     [SerializeField] private Button stopButton;
     [SerializeField] private Button pauseResumeButton;
     [SerializeField] private SliderParam speedSlider;
+    [SerializeField] private TMP_Text pauseResumeLabel;
+
+    [Header("Grafico popolazioni")]
+    [SerializeField] private Button toggleGraphButton;
+    [SerializeField] private PopulationGraphHUD populationGraph;
 
     [Header("Colori pausa")]
     [SerializeField] private Color pauseColor = new Color(0.85f, 0.64f, 0.12f, 1f);
     [SerializeField] private Color resumeColor = new Color(0.60f, 0.80f, 0.19f, 1f);
-
-    [Header("Statistiche")]
-    [SerializeField] private TMP_Text preyCountLabel;
-    [SerializeField] private TMP_Text predCountLabel;
-    [SerializeField] private TMP_Text plantCountLabel;
-    [SerializeField] private TMP_Text elapsedTimeLabel;
-    [SerializeField] private TMP_Text pauseResumeLabel;
 
     [Header("Camera follow")]
     [SerializeField] private Button unlockCameraButton;
@@ -38,16 +36,18 @@ public class SimulationHUD : UIScreen
     private SimulationRunner Runner => SimulationRunner.Instance;
 
     private Animal _followedAnimal;
+    private bool   _isFollowing;
 
-    // ── Lifecycle ─────────────────────────────────────────────────────────────
-
+    // Setup dei listener e SliderParam
     protected override void Awake()
     {
         base.Awake();
+
         stopButton.onClick.AddListener(OnStop);
         pauseResumeButton.onClick.AddListener(OnPauseResume);
         unlockCameraButton.onClick.AddListener(OnUnlockCamera);
         povButton.onClick.AddListener(OnTogglePOV);
+        toggleGraphButton.onClick.AddListener(OnToggleGraph);
         speedSlider.Setup("Speed", 1f, 0.5f, 10f, v => Sim.TimeScale = v);
     }
 
@@ -65,58 +65,55 @@ public class SimulationHUD : UIScreen
         StopFollowing();
     }
 
-    // ── Update ────────────────────────────────────────────────────────────────
-
     private void Update()
     {
         if (!gameObject.activeSelf || Runner == null) return;
 
-        UpdateStats();
+        // Verifichiamo che l'animale in follow esista ancora
         CheckFollowedAnimalAlive();
 
+        // Esegue raycast se l'utente clicca, entrando in modalità follow se si preme su un animale
         if (!Sim.IsInPOV)
             HandleCameraClickInput();
 
+        // Shortcut per modalità POV (premere F)
         if (_followedAnimal != null && Keyboard.current.fKey.wasPressedThisFrame)
             OnTogglePOV();
     }
 
-    private void UpdateStats()
-    {
-        preyCountLabel.text = $"Prey: {Runner.PreyCount}";
-        predCountLabel.text = $"Predators: {Runner.PredatorCount}";
-        plantCountLabel.text = $"Plants: {Runner.PlantCount}";
-        int s = Mathf.FloorToInt(Runner.ElapsedTime);
-        elapsedTimeLabel.text = $"Time: {s / 60}:{s % 60:00}";
-    }
-
-    // ── Camera follow ─────────────────────────────────────────────────────────
-
     private void CheckFollowedAnimalAlive()
     {
-        if (_followedAnimal == null) return;
-        if (!_followedAnimal.IsAlive)
+        // Se non stiamo seguendo nessuno, pazienza
+        if (!_isFollowing) return;
+
+        // Se l'animale muore o smette di esistere, interrompiamo il follow
+        if (_followedAnimal == null || !_followedAnimal.IsAlive)
         {
             if (Sim.IsInPOV) Sim.TogglePOV();
             StopFollowing();
         }
     }
 
+    // Gestisce l'entrata e l'uscita della camera in modalità Follow tramite raycast
     private void HandleCameraClickInput()
     {
+        // Se l'utente non clicca, oppure clicca sopra un componente UI, allora nulla
         if (!Mouse.current.leftButton.wasPressedThisFrame) return;
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 
         var cam = Camera.main;
         if (cam == null) return;
 
+        // Partendo dalla camera, facciamo un raycast
         Ray ray = cam.ScreenPointToRay(Mouse.current.position.ReadValue());
         if (Physics.Raycast(ray, out RaycastHit hit))
         {
+            // Se colpiamo un animale, la Camera passa in modalità Follow
             var animal = hit.collider.GetComponentInParent<Animal>();
             if (animal != null && animal.IsAlive) { StartFollowing(animal); return; }
         }
 
+        // Se l'utente non preme su un animale, allora esce dalla modalità follow
         if (_followedAnimal != null) StopFollowing();
     }
 
@@ -124,6 +121,8 @@ public class SimulationHUD : UIScreen
     {
         if (Sim.IsInPOV) Sim.TogglePOV();
         _followedAnimal = target;
+        _isFollowing = true;
+
         Sim.SetCameraFollow(target);
         SetFollowUI(true);
     }
@@ -131,17 +130,18 @@ public class SimulationHUD : UIScreen
     private void StopFollowing()
     {
         _followedAnimal = null;
+        _isFollowing = false;
+
         Sim.SetCameraFollow(null);
         SetFollowUI(false);
     }
 
+    // Metodo chiamato dal bottone STOP FOLLOWING
     private void OnUnlockCamera()
     {
         if (Sim.IsInPOV) Sim.TogglePOV();
         StopFollowing();
     }
-
-    // ── POV ───────────────────────────────────────────────────────────────────
 
     private void OnTogglePOV()
     {
@@ -150,6 +150,7 @@ public class SimulationHUD : UIScreen
         UpdatePOVButton();
     }
 
+    // Cambia la label del POV button
     private void UpdatePOVButton()
     {
         bool active = Sim.IsInPOV;
@@ -157,6 +158,7 @@ public class SimulationHUD : UIScreen
         povButtonLabel.color = active ? povActiveColor : povInactiveColor;
     }
 
+    // I bottoni STOP FOLLOWING e POV vengono attivati solo se si entra in modalità follow
     private void SetFollowUI(bool active)
     {
         unlockCameraButton.gameObject.SetActive(active);
@@ -164,8 +166,7 @@ public class SimulationHUD : UIScreen
         if (!active) UpdatePOVButton();
     }
 
-    // ── Stop / Pause ──────────────────────────────────────────────────────────
-
+    // Mette in pausa la simulazione, chiede conferma all'utente, e in caso positivo riporta l'utente in MapSelectionScreen
     private void OnStop()
     {
         bool wasPaused = Sim.Paused;
@@ -179,7 +180,6 @@ public class SimulationHUD : UIScreen
                 StopFollowing();
                 Sim.Stop();
 
-                // MapSelection con MainScreen nella history: Back funziona
                 UIManager.Instance.NavigateClean<MapSelectionScreen>(
                     UIManager.Instance.GetScreen<MainScreen>()
                 );
@@ -200,6 +200,11 @@ public class SimulationHUD : UIScreen
     {
         Sim.Paused = !Sim.Paused;
         UpdatePauseLabel();
+    }
+
+    private void OnToggleGraph()
+    {
+        if (populationGraph != null) populationGraph.ToggleChart();
     }
 
     private void UpdatePauseLabel()

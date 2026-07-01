@@ -8,16 +8,14 @@ public class AppSettingsManager : MonoBehaviour
 
     public AppSettings Settings { get; private set; }
 
-    // Lista dei Material skybox nell'ordine corrispondente
-    // a AestheticsPanel.skyboxes[].sprite.
-    // Assegna tutti i Material nell'Inspector.
-    [Header("Skyboxes — stesso ordine di AestheticsPanel")]
+    // Lista dei Material skybox nell'ordine corrispondente a AestheticsPanel.skyboxes[].sprite.
+    [Header("Skyboxes")]
     [SerializeField] private Material[] skyboxMaterials;
 
+    // Questa è SEMPRE salvata nel persistentDataPath, visto che non mi serviva nell'editor di Unity
     private string SavePath
         => Path.Combine(Application.persistentDataPath, "app_settings.json");
 
-    // ── Init ──────────────────────────────────────────────────────────────────
 
     private void Awake()
     {
@@ -29,16 +27,12 @@ public class AppSettingsManager : MonoBehaviour
     private void Start()
     {
         ApplyCameraSettings();
-        // Lo skybox NON viene applicato qui: viene applicato da WorldSession
-        // quando si apre l'editor o si avvia la simulazione.
+        // Lo skybox NON viene applicato qui, ma in WorldSession quando si apre l'editor o si avvia la simulazione (cedi prossimo metodo)
     }
 
-    // ── API pubblica ──────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Applica il skybox corrispondente all'indice salvato.
-    /// Chiamato da WorldSession.EnterEditor() e WorldSession.EnterSimulation().
-    /// </summary>
+    // Applica lo skybox corrispondente all'indice salvato.
+    // Chiamato da WorldSession.EnterEditor() e WorldSession.EnterSimulation().
     public void ApplySkybox()
     {
         if (skyboxMaterials == null || skyboxMaterials.Length == 0) return;
@@ -48,13 +42,11 @@ public class AppSettingsManager : MonoBehaviour
 
         if (material == null) return;
 
-        // UnityEngine.RenderSettings (namespace completo per evitare ambiguità
-        // con la nostra classe WorldRenderSettings)
         UnityEngine.RenderSettings.skybox = material;
         DynamicGI.UpdateEnvironment();
     }
 
-    /// <summary>Applica le impostazioni camera a WorldCamera (se disponibile).</summary>
+    // Applica le impostazioni camera a WorldCamera
     public void ApplyCameraSettings()
     {
         WorldSession.Instance?.Camera?.ApplySettings(Settings.camera);

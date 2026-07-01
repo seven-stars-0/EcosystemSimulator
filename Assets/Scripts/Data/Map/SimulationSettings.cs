@@ -1,91 +1,84 @@
 using System;
+using System.Reflection;
+using UnityEngine;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Mappatura coefficienti LV → parametri:
-//
-//   dN/dt  = α·N·(1 - N/K)  -  β·N·P
-//   dP/dt  = γ·β·N·P         -  δ·P
-//
-//   α  (tasso riproduttivo prede)   → reproductionCooldown (↑ cooldown = ↓ α)
-//   β  (tasso predazione)           → attackRange, attackCooldown, killChance
-//   γ  (efficienza conversione)     → preyEnergyValue
-//   δ  (mortalità predatori)        → hungerRate, metabolismBase
-//   K  (carrying capacity prede)    → plantGrowthRate + plantCarryingCapacity
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================================
+//  SimulationSettings  -  Parametri dell'ecologia a energia.
+// ----------------------------------------------------------------------------
+//  TEMPO STIRATO 3x: tutti i parametri-tempo sono scalati di un fattore 3
+//  (consumi /3, durate *3) -> stessa dinamica, ma vita piu' lunga e oscillazioni
+//  piu' ampie. Energie-per-pasto, soglie, costi, capacita' e movimento NON sono
+//  tempi e restano invariati (la forma del ciclo non cambia, solo la sua durata).
+// ============================================================================
 
 [Serializable]
 public class SimulationSettings
 {
-    // ── Physiology (δ) ────────────────────────────────────────────────────────
-    // Un animale a riposo con metabolismMult=1 brucia:
-    //   energia: metabolismBase/s = 0.00015/s  → riserva base ~1.0 dura ~1.8h sim
-    //   fame:    hungerRate/s     = 0.0008/s   → da 0 a 1 in ~1250s (~20min sim)
-    //   sete:    thirstRate/s     = 0.0012/s   → da 0 a 1 in ~833s  (~14min sim)
-    // A velocità massima (6 u/s) si aggiunge speedEnergyCost*speed = 0.0015/s.
-    public float hungerRate = 0.0008f;   // ↓ era 0.008  (÷10)
-    public float thirstRate = 0.0012f;   // ↓ era 0.012  (÷10)
-    public float metabolismBase = 0.00015f;  // ↓ era 0.001  (÷~7)
+    // -- Prede: alimentazione e riproduzione -------------------------------
+    public float preyEnergyPerPlant = 0.35f;   // energia/pasto (NON tempo)
+    public float preyReproThreshold = 0.55f;   // livello energia (NON tempo)
+    public float preyReproCost      = 0.25f;   // energia (NON tempo)
+    public float preyReproCooldown  = 30f;     // TEMPO  (era 10, *3)
+    public float preyCarryingCapacity = 150f;
+    public float preyCapPredatorSensitivity = 0f;
 
-    // ── Movement ──────────────────────────────────────────────────────────────
-    public float speedEnergyCost = 0.00025f;  // ↓ era 0.004  (÷16)
-    public float slopeEnergyCost = 0.002f;    // ↓ era 0.02   (÷10)
-    public float steeringForceScale = 1.2f;
+    // -- Predazione: rifugio spaziale + handling time ----------------------
+    public float attackRange  = 2.0f;
+    public float killChance   = 0.25f;
+    public float handlingTime = 36f;           // TEMPO  (era 12, *3)
 
-    // ── Feeding (γ) ───────────────────────────────────────────────────────────
-    // Con il metabolismo più lento, un frutto deve comunque essere "sostanzioso":
-    //   plantEnergyValue 0.20 = +20% energia per frutto (era 0.25, ora proporzionato)
-    //   preyEnergyValue  0.55 = un kill copre ~55% energia predatore (era 0.60)
-    //   foodHungerRestore   : riduce fame del 40% per frutto (era 0.35)
-    public float plantEnergyValue = 0.20f;
-    public float preyEnergyValue = 0.55f;
-    public float foodHungerRestore = 0.40f;
-    public float waterThirstRestore = 0.50f;
-    public float drinkingRange = 3f;
+    // -- Predatori ---------------------------------------------------------
+    public float predatorEnergyPerPrey  = 0.55f;
+    public float predatorReproThreshold = 0.60f;
+    public float predatorReproCost      = 0.40f;
+    public float predatorReproCooldown  = 54f;     // TEMPO (era 18, *3)
 
-    // ── Reproduction (α) ──────────────────────────────────────────────────────
-    // reproductionCooldown 120s: con timeScale=1 → ~2 min reali tra nascite.
-    // Con timeScale=5 → 24s reali → generazione osservabile ma non frenetica.
-    public float offspringEnergyFraction = 0.30f;     // ↑ lieve (cucciolo più robusto)
-    public float reproductionThreshold = 0.55f;     // ↑ era 0.40 (serve più energia)
-    public float reproductionCooldown = 120f;      // ↑ era 40s  (×3)
-    public float mateSeekingBoost = 6f;
+    public float predatorMetabolicDrain = 0.0027f; // energia/TEMPO (era 0.008, /3)
+    public float preyMetabolicDrain     = 0.0005f; // energia/TEMPO (era 0.0015, /3)
+    public float hungerRate             = 0.0005f; // fame/TEMPO    (era 0.0015, /3)
 
-    // ── Genetics ──────────────────────────────────────────────────────────────
-    public float mutationRate = 0.04f;
+    public float predatorFoodRatio = 3.0f;
+    public float predatorInterference = 0.5f;
+
+    // -- Mortalita' predatori da SCARSITA' di prede (tipo Leslie-Gower).
+    //    Dipende dal rapporto R = prede/predatori: se R scende sotto ComfortRatio
+    //    (troppi predatori per le prede disponibili) i predatori iniziano a morire,
+    //    con prob. crescente man mano che R -> 0. Sopra ComfortRatio: nessuna morte
+    //    extra (mangiano e si riproducono). E' STOCASTICA per-individuo -> niente
+    //    coorti sincronizzate (niente "spalle"), ed e' AUTO-LIMITANTE: appena i
+    //    predatori calano, R risale e il termine si spegne -> non si estinguono mai
+    //    se ci sono prede.
+    public float predatorScarcityMortality = 0.02f;  // prob/s di morte a R=0 (max)
+    public float predatorComfortRatio      = 1.5f;   // prede/predatore sopra cui niente morte extra
+
+    public float energyMax = 1.0f;
+    public float offspringEnergy = 0.45f;   // energia di partenza della prole (sotto soglia di riproduzione)
+
+    // -- Aspetto (scala dei prefab per specie) --
+    public float preyScale = 1f;
+    public float predatorScale = 1.2f;
+
+    // -- Evoluzione: 3 geni (maxSpeed, visionRange, social) ----------------
+    public float mutationRate = 0.05f;
     public float mutationStrength = 0.10f;
+    public float speedMin = 1.5f, speedMax = 7f;
+    public float visionMin = 6f, visionMax = 24f;
+    public float socialMin = -2f, socialMax = 2.5f;
 
-    // ── Plants (K – carrying capacity) ───────────────────────────────────────
-    // plantGrowthRate ridotto: evita saturazione istantanea dopo boom.
-    // plantCarryingCapacityFraction: soglia oltre la quale la crescita crolla.
-    public float plantGrowthRate = 0.012f;  // ↓ era 0.03 (÷2.5)
-    public float plantCarryingCapacityFraction = 0.35f; // NUOVO: tetto al 35% celle
-    public float fruitRegrowTimeMin = 20f;     // ↑ era 8s
-    public float fruitRegrowTimeMax = 80f;     // ↑ era 40s
+    // -- Piante (cibo visivo) ----------------------------------------------
+    public float plantGrowthRate = 0.01f;      // crescita/TEMPO (era 0.03, /3)
+    public float plantCarryingCapacityFraction = 0.35f;
+    public float fruitRegrowTime = 48f;        // TEMPO (era 16, *3)
     public float plantMinHeight = 0.25f;
 
-    // ── Urgency ───────────────────────────────────────────────────────────────
-    public float urgencyMax = 3.5f;
+    // -- Logging --
+    public float logSampleInterval = 1f;   // secondi tra i campioni del CSV (1..120)
 
-    // ── Predation (β) ─────────────────────────────────────────────────────────
-    // killChance: probabilità base di successo attacco (parametro β in LV).
-    //   40% = predatore fallisce il 60% degli attacchi → pressione ridotta.
-    // handlingTime: secondi in cui il predatore è "occupato" dopo un kill.
-    //   Durante l'handling il predatore ignora altre prede (saturazione Type II).
-    // attackCooldown (miss): mini-cooldown se l'attacco fallisce.
-    public float attackRange = 1.8f;
-    public float attackCooldown = 3.0f;      // ↑ era 2.5s
-    public float knockbackSpeed = 7f;
-    public float killChance = 0.42f;     // NUOVO: β esplicito (42%)
-    public float handlingTime = 9f;        // NUOVO: Holling Type II
-    public float missStunDuration = 1.2f;      // NUOVO: cooldown su miss
+    public SimulationSettings Clone() => (SimulationSettings)MemberwiseClone();
 
-    // ── Separation ────────────────────────────────────────────────────────────
-    public float separationRadius = 2.0f;
-    public float separationForce = 5.0f;
-
-    // ── Micro-Immigration (safety net) ────────────────────────────────────────
-    // Se una specie scende sotto immigrationThreshold individui,
-    // ogni immigrationInterval secondi viene spawnato 1 individuo al bordo mappa.
-    public int immigrationThreshold = 3;         // NUOVO
-    public float immigrationInterval = 60f;       // NUOVO: 60s reali di simulazione
+    public void CopyFrom(SimulationSettings other)
+    {
+        foreach (FieldInfo f in typeof(SimulationSettings).GetFields(BindingFlags.Public | BindingFlags.Instance))
+            f.SetValue(this, f.GetValue(other));
+    }
 }

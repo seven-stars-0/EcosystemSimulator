@@ -16,7 +16,7 @@ public class UIManager : MonoBehaviour
 
     private readonly Dictionary<Type, UIScreen> _registry = new();
     private UIScreen _current;
-    private readonly Stack<UIScreen> _history = new();
+    private readonly Stack<UIScreen> _history = new(); // Per il back
 
     private void Awake()
     {
@@ -36,29 +36,17 @@ public class UIManager : MonoBehaviour
         ForceInitPopup(extinctionPopup);
     }
 
-    /// <summary>
-    /// Garantisce che il popup abbia girato il suo Awake (attivandolo brevemente
-    /// se era inattivo) e lo lascia SEMPRE disattivato alla fine.
-    ///
-    /// Il bug precedente: se il popup partiva attivo in Inspector, Awake girava
-    /// subito e lo disattivava. ForceInitPopup lo riattivava (Awake non ri-gira)
-    /// e non lo ri-disattivava → popup rimasto visibile.
-    /// Fix: SetActive(false) incondizionato alla fine.
-    /// </summary>
+    // Attiva il popup (così gira il suo Awake, che lo nasconde via CanvasGroup) e lo lascia attivo:
+    // I popup non vengono mai disattivati, solo resi invisibili.
     private static void ForceInitPopup(Popup popup)
     {
         if (popup == null) return;
-
-        // Se inattivo, attivalo per triggerare Awake (una tantum)
-        if (!popup.gameObject.activeSelf)
-            popup.gameObject.SetActive(true);
-
-        // Garantisce sempre lo stato nascosto, qualunque cosa sia successa
-        popup.gameObject.SetActive(false);
+        popup.gameObject.SetActive(true);
     }
 
     private void Start() => Show<MainScreen>(pushToHistory: false);
 
+    // Usato per navigare le schermate
     public T GetScreen<T>() where T : UIScreen
     {
         if (_registry.TryGetValue(typeof(T), out UIScreen s)) return (T)s;
@@ -66,6 +54,7 @@ public class UIManager : MonoBehaviour
         return null;
     }
 
+    // Usato per mostrare la schermata successiva DI CUI SI HA L'ISTANZA
     public void Show(UIScreen next, bool pushToHistory = true)
     {
         if (next == null) { Debug.LogError("[UIManager] Show called with null screen."); return; }
@@ -78,6 +67,7 @@ public class UIManager : MonoBehaviour
         _current.Show();
     }
 
+    // Usato per mostrare la schermata successiva di cui NON SI HA L'ISTANZA
     public void Show<T>(bool pushToHistory = true) where T : UIScreen
     {
         var s = GetScreen<T>();
@@ -92,19 +82,8 @@ public class UIManager : MonoBehaviour
         _current.Show();
     }
 
-    public void GoToMain()
-    {
-        _current?.HideImmediate();
-        _history.Clear();
-        _current = GetScreen<MainScreen>();
-        _current?.Show();
-    }
-
-    /// <summary>
-    /// Naviga a T ricostruendo la history in modo esplicito.
-    /// Passare gli schermi genitore dal più vecchio al più recente.
-    /// Esempio: NavigateClean&lt;EditorHUD&gt;(GetScreen&lt;MainScreen&gt;(), GetScreen&lt;MapSelectionScreen&gt;())
-    /// </summary>
+    // Naviga a T ricostruendo la history in modo esplicito
+    // Richiede gli schermi genitore dal più vecchio al più recente
     public void NavigateClean<T>(params UIScreen[] historyFromOldestToNewest) where T : UIScreen
     {
         _current?.HideImmediate();

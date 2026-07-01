@@ -1,64 +1,34 @@
-// 1. CROSSOVER UNIFORME PURO:
-//    Ogni gene viene ereditato SECCAMENTE al 50% dal padre O dalla madre.
-//    Il Lerp precedente era un "frullatore" che azzerava i tratti estremi:
-//    se un genitore ha maxSpeed=6.0 e uno ha maxSpeed=2.0, il figlio
-//    aveva quasi sempre ~4.0 → convergenza verso la mediocrità.
-//    Con il crossover uniforme, il figlio può ereditare 6.0 OR 2.0,
-//    preservando i tratti vantaggiosi e mantenendo diversità.
-//
-// 2. MUTAZIONE GAUSSIANA (Box-Muller):
-//    Sostituisce il delta uniforme Random.Range(-strength, +strength).
-//    La distribuzione gaussiana N(0, mutationStrength) rispecchia la
-//    biologia: piccole mutazioni molto frequenti, grandi stravolgimenti
-//    rarissimi. Con il vecchio range uniforme, una mutazione di ±0.10 era
-//    ugualmente probabile di ±0.001, il che è irrealistico.
-
 using UnityEngine;
 
-public static class GeneticsOps
+public static class GeneticOps
 {
-    public static GeneticProfile Reproduce(
-        GeneticProfile parentA,
-        GeneticProfile parentB,
-        SimulationSettings s)
+    public static GeneticProfile Mutate(GeneticProfile parent, SimulationSettings s)
     {
-        float[] a = parentA.ToArray();
-        float[] b = parentB.ToArray();
-        float[] child = new float[GeneticProfile.GENE_COUNT];
+        var child = parent.Clone();
 
-        for (int i = 0; i < GeneticProfile.GENE_COUNT; i++)
-        {
-            // ── Crossover uniforme puro ──────────────────────────────────────
-            // 50% di probabilità di prendere il gene da A o da B.
-            // NON è una media: il gene è uno dei due valori originali.
-            child[i] = Random.value < 0.5f ? a[i] : b[i];
+        // Lo span serve per uniformare la mutationStrength in base al range di valori che il gene pu� assumere
+        // Questo perch� l'utente pu� scegliere, ad esempio, un range piccolissimo per social e grandissimo per speed;
+        // se usassero tutte solo mutationStrength allora ci vorrebbe tantissimo per avere un cambiamento significativo in speed, e pochissimo per social
+        float speedSpan  = s.speedMax  - s.speedMin;
+        float visionSpan = s.visionMax - s.visionMin;
+        float socialSpan = s.socialMax - s.socialMin;
 
-            // ── Mutazione gaussiana (Box-Muller) ─────────────────────────────
-            // Genera un delta distribuito normalmente con σ = mutationStrength.
-            // Piccole mutazioni sono molto più probabili di grandi stravolgimenti.
-            if (Random.value < s.mutationRate)
-                child[i] += GaussianSample() * s.mutationStrength;
-        }
+        // Mutazioni a caso
+        if (Random.value < s.mutationRate) child.maxSpeed    += Gaussian() * s.mutationStrength * speedSpan;
+        if (Random.value < s.mutationRate) child.visionRange += Gaussian() * s.mutationStrength * visionSpan;
+        if (Random.value < s.mutationRate) child.social      += Gaussian() * s.mutationStrength * socialSpan;
 
-        var profile = new GeneticProfile();
-        profile.FromArray(child);
-
-        // ── Clamp valori con limiti biologici ────────────────────────────────
-        profile.w_curiosity = Mathf.Max(0f, profile.w_curiosity);
-        profile.maxSpeed = Mathf.Max(0.2f, profile.maxSpeed);
-        profile.visionRange = Mathf.Max(1f, profile.visionRange);
-        profile.metabolismMult = Mathf.Max(0.1f, profile.metabolismMult);
-
-        return profile;
+        // Fa il clamp dei valori in base alle impostazioni inserite dall'utente
+        child.maxSpeed    = Mathf.Clamp(child.maxSpeed,    s.speedMin,  s.speedMax);
+        child.visionRange = Mathf.Clamp(child.visionRange, s.visionMin, s.visionMax);
+        child.social      = Mathf.Clamp(child.social,      s.socialMin, s.socialMax);
+        return child;
     }
 
-    /// <summary>
-    /// Genera un campione dalla distribuzione normale standard N(0,1)
-    /// usando l'algoritmo di Box-Muller.
-    /// </summary>
-    private static float GaussianSample()
+    // Box-Muller per gaussiana per variabili Unif[0,1]
+    // u1 non pu� essere 0, perch� log(0) = -inf
+    private static float Gaussian()
     {
-        // Evita log(0): clamp a un valore molto piccolo ma positivo
         float u1 = Mathf.Max(1e-6f, Random.value);
         float u2 = Random.value;
         return Mathf.Sqrt(-2f * Mathf.Log(u1)) * Mathf.Cos(2f * Mathf.PI * u2);
